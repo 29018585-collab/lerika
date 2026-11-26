@@ -1,0 +1,39 @@
+name: VK API access check
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check read methods without exposing data
+        env:
+          VK_ACCESS_TOKEN: ${{ secrets.VK_ACCESS_TOKEN }}
+        run: |
+          python - <<'PY'
+          import os, json, urllib.request, urllib.parse
+          token = os.environ.get('VK_ACCESS_TOKEN')
+          if not token:
+              raise SystemExit('Missing VK_ACCESS_TOKEN')
+          checks = [
+              ('groups.getById', {'group_ids':'232430552'}),
+              ('wall.get', {'owner_id':'-232430552','count':1}),
+              ('photos.getAlbums', {'owner_id':'-232430552','count':1}),
+              ('photos.getAll', {'owner_id':'-232430552','count':1}),
+              ('market.get', {'owner_id':'-232430552','count':1}),
+              ('docs.get', {'owner_id':'-232430552','count':1}),
+          ]
+          for method, params in checks:
+              body = urllib.parse.urlencode(dict(params, access_token=token, v='5.199')).encode()
+              try:
+                  with urllib.request.urlopen('https://api.vk.com/method/'+method, data=body, timeout=20) as r:
+                      result = json.load(r)
+                  if 'error' in result:
+                      print(method, 'VK error', result['error'].get('error_code'))
+                  else:
+                      print(method, 'OK' if 'response' in result else 'Unexpected response')
+              except Exception as e:
+                  print(method, 'Transport error', type(e).__name__)
+          PY
