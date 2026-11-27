@@ -30,10 +30,21 @@ jobs:
           grep -Fq 'function panelProjection' /tmp/lerika-showroom.html
           grep -Fq 'new Float64Array(W*H)' /tmp/lerika-showroom.html
           grep -Fq 'function flushSave()' /tmp/lerika-showroom.html
-          echo 'PASS: V5.21 and V5.22 showroom markers'
+          grep -Fq 'ЛЕРИКА · V5.23' /tmp/lerika-showroom.html
+          grep -Fq 'name="lerika-portfolio-api" content="/"' /tmp/lerika-showroom.html
+          test "$(wc -c </tmp/lerika-showroom.html)" -lt 500000
+          echo "PASS: V5.21–V5.23 markers and reduced HTML: $(wc -c </tmp/lerika-showroom.html) bytes"
+          check /showroom/public-kitchen-82efc7056beb5d38.webp 200
+          check /showroom/public-stairs-29648d9037e33a71.webp 200
+          check /showroom/scene-lit-3027a1761979dacd.webp 200
+          curl -fsS --max-time 60 -D /tmp/lerika-headers -o /dev/null "$BASE/showroom/public-kitchen-82efc7056beb5d38.webp"
+          grep -Eiq '^cache-control:.*public.*max-age=31536000.*immutable' /tmp/lerika-headers
+          curl -fsS --max-time 60 -D /tmp/lerika-api-headers -o /dev/null "$BASE/public/prices"
+          grep -Eiq '^cache-control:.*no-store' /tmp/lerika-api-headers
+          echo 'PASS: public immutable assets and no-store API'
           check /cabinet/ 200
           check /public/prices 200
           check /public/portfolio 200
           check /api/projects 401
           check /api/client/session 401
-          echo 'PASS: post-V5.22 live deployment read-only smoke; no customer submissions or authenticated writes'
+          echo 'PASS: post-V5.23 live deployment read-only smoke; no customer submissions or authenticated writes'
