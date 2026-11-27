@@ -21,7 +21,7 @@ class StudioTests(unittest.TestCase):
     def setUp(self):
         self.client=app.test_client()
         with db() as c:
-            for table in ("covers","files","design_requests","projects","attempts"):
+            for table in ("covers","files","design_briefs","design_requests","projects","attempts"):
                 c.execute("DELETE FROM "+table)
     def data(self,rid=None):
         return dict(request_id=rid or secrets.token_hex(16),consent="yes",title="Тест кухни",room="Кухня",contact="test@example.invalid",brief="Пожелания: тест")
@@ -51,8 +51,22 @@ class StudioTests(unittest.TestCase):
         projects=self.client.get("/api/projects",base_url=ORIGIN).json["projects"]
         self.assertEqual(projects[0]["id"],rid)
         self.assertEqual(len(projects[0]["files"]),3)
+        self.assertIn("test@example.invalid",projects[0]["private_brief"])
+        self.assertNotIn("test@example.invalid",projects[0]["description"])
+        self.assertNotIn("Тест кухни",projects[0]["title"])
         for f in projects[0]["files"]:
             self.assertEqual(self.client.get("/api/files/"+f["id"],base_url=ORIGIN).status_code,200)
+    def test_private_brief_never_in_public_portfolio(self):
+        rid=self.submit(self.data()).json["id"]
+        login=self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
+        csrf=login.json["csrf"]
+        p=self.client.get("/api/projects",base_url=ORIGIN).json["projects"][0]
+        self.assertIn("test@example.invalid",p["private_brief"])
+        self.assertEqual(self.client.put("/api/projects/"+rid,base_url=ORIGIN,headers={"X-CSRF":csrf},json={**p,"published":True}).status_code,200)
+        public=self.client.get("/public/portfolio").json["projects"][0]
+        self.assertNotIn("private_brief",public)
+        self.assertNotIn("test@example.invalid",str(public))
+        self.assertNotIn("Пожелания: тест",str(public))
     def test_duplicate(self):
         d=self.data()
         self.assertEqual(self.submit(d.copy()).status_code,201)
