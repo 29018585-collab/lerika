@@ -85,7 +85,7 @@ def headers(r):
     r.headers["X-Content-Type-Options"]="nosniff"
     r.headers["Referrer-Policy"]="no-referrer"
     r.headers["X-Frame-Options"]="DENY"
-    r.headers["Content-Security-Policy"]="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+    r.headers["Content-Security-Policy"]="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; manifest-src 'self'; worker-src 'self'"
     r.headers["Cache-Control"]="no-store"
     if request.path.startswith("/public/"):
         r.headers["Access-Control-Allow-Origin"]=ORIGIN
@@ -105,6 +105,32 @@ def admin(f):
 @app.get("/")
 def index():
     return render_template("admin.html")
+
+
+@app.get("/manifest.webmanifest")
+def manifest():
+    return send_file(Path(app.static_folder)/"manifest.webmanifest", mimetype="application/manifest+json")
+
+@app.get("/sw.js")
+def service_worker():
+    return send_file(Path(app.static_folder)/"sw.js", mimetype="application/javascript")
+
+@app.get("/app-icon/<name>.png")
+def application_icon(name):
+    if name not in ("192","512","512-maskable"):
+        abort(404)
+    size=192 if name=="192" else 512
+    logo=Path(app.root_path).parent/"file_000000009ab0820ab36b48bd9c6cebc7.png"
+    # Same approved brand asset as the public website.
+    with Image.open(logo) as source:
+        im=source.convert("RGBA")
+        im.thumbnail((int(size*.72),int(size*.72)),Image.Resampling.LANCZOS)
+        canvas=Image.new("RGBA",(size,size),"#211914")
+        canvas.alpha_composite(im,((size-im.width)//2,(size-im.height)//2))
+        out=io.BytesIO()
+        canvas.convert("RGB").save(out,format="PNG")
+        out.seek(0)
+    return send_file(out,mimetype="image/png")
 
 @app.get("/health")
 def health():
