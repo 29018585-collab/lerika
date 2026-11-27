@@ -23,6 +23,7 @@ await cdp.send("Input.dispatchTouchEvent",{type:"touchEnd",touchPoints:[]});
 assert.ok(parseInt((await p.locator("#lz-foot").textContent()).match(/\d+%/)[0])>150,"pinch must zoom");
 await p.locator("#lz-close").click();await p.locator("#lz-dialog").waitFor({state:"hidden"});
 // Live exploded assembly: visual offsets do not affect engineering quantities.
+await p.locator("#le-view").evaluate(cv=>cv.liveEdit.action());
 const partsBefore=await p.locator("#le-parts").textContent();
 const target=await p.locator("#le-view").evaluate(cv=>{for(let y=110;y<cv.height-100;y+=8)for(let x=65;x<cv.width-65;x+=8){const id=cv.liveEdit.pick(x,y);if(id!==null&&cv.liveEdit.pick(x+4,y+4)===id&&cv.liveEdit.pick(x-4,y-4)===id)return {x,y,id,w:cv.width,h:cv.height}}throw Error("No visible exploded part")});
 await p.locator("#le-component").selectOption(String(target.id));
@@ -32,10 +33,11 @@ const stageBox=await p.locator("#lz-stage").boundingBox(),scale=Math.min(stageBo
 await cdp.send("Input.dispatchTouchEvent",{type:"touchStart",touchPoints:[{x:px,y:py,id:1}]});
 await cdp.send("Input.dispatchTouchEvent",{type:"touchMove",touchPoints:[{x:px+30,y:py+15,id:1}]});
 await cdp.send("Input.dispatchTouchEvent",{type:"touchEnd",touchPoints:[]});
-assert.notEqual(await p.locator("#le-view").evaluate(c=>c.toDataURL()),assembled,"live assembly visual must move");
+assert.ok((await p.locator("#le-view").evaluate(c=>c.toDataURL()))!==assembled,"live assembly visual must move");
 assert.equal(await p.locator("#le-parts").textContent(),partsBefore,"engineering quantities must be unchanged");
 await p.locator("#lz-edit-action").click();
-assert.equal(await p.locator("#le-view").evaluate(c=>c.toDataURL()),assembled,"reset restores initial exploded arrangement");
+assert.equal(await p.locator("#le-component").inputValue(),String(target.id),"selected part remains selected");
+assert.ok((await p.locator("#le-view").evaluate(c=>c.toDataURL()))===assembled,"reset restores initial exploded arrangement");
 await p.locator("#lz-close").click();
 console.log("PASS live exploded component touch, reset, immutable quantities");
 await p.locator("#lz-open-le-cut-view").click();await p.locator("#lz-dialog").waitFor({state:"visible"});await p.keyboard.press("Escape");await p.locator("#lz-dialog").waitFor({state:"hidden"});
