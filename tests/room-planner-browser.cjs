@@ -65,6 +65,19 @@ await page.locator("#lp-local-load").click();assert.equal(await page.locator("#l
 const download=page.waitForEvent("download");await page.locator("#lp-csv").click();assert.equal((await download).suggestedFilename(),"LERIKA-Room-Summary.csv");
 await page.locator("#lp-studio").click();await page.locator("#lab-ai-panel").waitFor({state:"visible"});assert.match(await page.locator("#lab-ai-photo-status").textContent(),/2 \/ 6 файлов/);
 for(const [hash,id] of [["3d","lab-3d-panel"],["config","lab-config-panel"],["ai","lab-ai-panel"],["plan","lab-plan-panel"]]){await page.evaluate(h=>location.hash="#design-lab/"+h,hash);await page.locator("#"+id).waitFor({state:"visible"});}
+// V5.22 autosave and movement constraints.
+await page.locator("#lp-demo").click();await page.locator("#lp-2d").click();
+await page.locator("#lp-clear").click();
+await page.locator("#lp-type").selectOption("wardrobe");await page.locator("#lp-add").click();
+await page.locator("#lp-x").fill("0");await page.locator("#lp-z").fill("0");await page.locator("#lp-item-apply").click();
+const initial=await page.evaluate(()=>LerikaRoomProject.snapshot());
+await page.locator('[data-lp-move="left"]').click();
+assert.deepEqual(await page.evaluate(()=>LerikaRoomProject.snapshot()),initial);
+await page.locator("#lp-rw").fill("6500");await page.locator("#lp-room-apply").click();
+const saved=await page.evaluate(()=>LerikaRoomProject.snapshot());
+await page.reload();await page.locator("#lp-view").waitFor({state:"visible"});
+assert.deepEqual(await page.evaluate(()=>LerikaRoomProject.snapshot()),saved,"immediate reload preserves plan");
 assert.deepEqual(errors,[]);
+console.log("PASS BUG-006/021: immediate reload, preserved layout, boundary movement rejected");
 console.log("Mobile browser, model validation, collision/export gate, save/load, CSV download, studio handoff and existing routes PASS");
 }finally{await browser.close();server.close()}})().catch(e=>{console.error(e);server.close();process.exitCode=1});

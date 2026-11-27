@@ -1,7 +1,7 @@
 name: Lab V5.6 isolated regression
 on:
   pull_request:
-    branches: [lerika-cabinet-v1]
+    branches: [lerika-cabinet-v1, lerika-v521-calculations]
     paths: ['index.html', 'cabinet/**', 'tests/**', '.github/workflows/lab-v56.yml']
   workflow_dispatch:
 permissions:
@@ -25,7 +25,8 @@ jobs:
           python - <<'PY'
           import re, subprocess, pathlib, tempfile, os
           new=pathlib.Path('index.html').read_text()
-          old=subprocess.check_output(['git','show','origin/lerika-cabinet-v1:index.html'],text=True)
+          base='b867014724a6b0e4aa2a08e60877861564eca517' if os.environ.get('GITHUB_HEAD_REF')=='lerika-v522-geometry' else 'origin/lerika-cabinet-v1'
+          old=subprocess.check_output(['git','show',base+':index.html'],text=True)
           def scripts(s):return re.findall(r'<script\b[^>]*>([\s\S]*?)</script>',s,re.I)
           a,b=scripts(old),scripts(new)
           assert len(b) in (len(a),len(a)+1,len(a)+2,len(a)+3)
@@ -41,7 +42,10 @@ jobs:
           elif len(b)==len(a)+2:
               assert [i for i,(x,y) in enumerate(zip(a,b)) if x!=y]==[1,6]
           else:
-              if os.environ.get('GITHUB_HEAD_REF')=='lerika-v521-calculations':
+              if os.environ.get('GITHUB_HEAD_REF')=='lerika-v522-geometry':
+                  baseline=scripts(subprocess.check_output(['git','show','b867014724a6b0e4aa2a08e60877861564eca517:index.html'],text=True))
+                  assert len(b)==len(baseline) and [i for i,(x,y) in enumerate(zip(baseline,b)) if x!=y and i not in (3,5,7,11,14,17)]==[], 'Unexpected V5.22 script change'
+              elif os.environ.get('GITHUB_HEAD_REF')=='lerika-v521-calculations':
                   assert [i for i,(x,y) in enumerate(zip(a,b)) if x!=y and i not in (3,5,7,12,17)]==[], 'Unexpected V5.21 script change'
               else:
                   assert all(a[i]==b[i] for i in [2,3,4,8,9,12,13,16] if i<len(a)), 'Shared engine changed'
@@ -73,6 +77,9 @@ jobs:
         run: |
           pip install ezdxf==1.4.3
           python tests/dxf-interop.py
+      - name: Independent 3D depth and ownership regression
+        if: ${{ hashFiles('tests/depth-browser.cjs') != '' }}
+        run: node tests/depth-browser.cjs
       - name: Engineering mobile browser tests
         if: ${{ hashFiles('tests/engineering-browser.cjs') != '' }}
         run: node tests/engineering-browser.cjs
