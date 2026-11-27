@@ -104,6 +104,22 @@ class StudioTests(unittest.TestCase):
         headers={"Origin":ORIGIN,"X-Lerika-Studio":"5.8"}
         for expected in (201,200):
             self.assertEqual(self.client.post("/api/order-requests",data=d,headers=headers,base_url=ORIGIN,content_type="multipart/form-data").status_code,expected)
+    def test_request_sources_private_and_validated(self):
+        expected=["3d","config","plan","engineering","order"]
+        for source in expected:
+            d=self.data();d["source"]=source
+            r=self.client.post("/api/order-requests",data=d,headers={"Origin":ORIGIN,"X-Lerika-Studio":"5.8"},base_url=ORIGIN,content_type="multipart/form-data")
+            self.assertEqual(r.status_code,201)
+        d=self.data();d["source"]="ai"
+        self.assertEqual(self.submit(d).status_code,201)
+        d=self.data();d["source"]="invalid"
+        self.assertEqual(self.submit(d).status_code,400)
+        self.assertEqual(self.client.get("/public/portfolio").json["projects"],[])
+        self.assertEqual(self.client.get("/api/projects",base_url=ORIGIN).status_code,401)
+        self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
+        rows=self.client.get("/api/projects",base_url=ORIGIN).json["projects"]
+        self.assertEqual({p["request_source"] for p in rows},set(expected+["ai"]))
+        self.assertTrue(all(p["request_created"] and p["published"]==0 for p in rows))
     def test_duplicate(self):
         d=self.data()
         self.assertEqual(self.submit(d.copy()).status_code,201)

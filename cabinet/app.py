@@ -28,6 +28,7 @@ if not SETUP_REQUIRED and (len(KEY)<32 or not PASSWORD.startswith(("scrypt:","pb
     raise RuntimeError("Set SESSION_SECRET (32+ random characters) and ADMIN_PASSWORD_HASH")
 app=Flask(__name__)
 app.config.update(SECRET_KEY=KEY if not SETUP_REQUIRED else None,SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SECURE=True,SESSION_COOKIE_SAMESITE="Strict",MAX_CONTENT_LENGTH=16*1024*1024)
+REQUEST_SOURCES={"3d":"3D-конструктор","ai":"Дизайн-студия","config":"Конфигуратор","plan":"Планировщик помещения","engineering":"Инженерная лаборатория","order":"Прямой заказ","legacy":"Источник не указан"}
 CATEGORIES=["Кухни","Шкафы","Прихожие","Спальни","Детские","Гостиные","Гардеробные","Нестандартные системы хранения"]
 STAGES=["Исходное помещение","Замеры и эскизы","3D-проект","Изготовление","Монтаж","Готовая мебель"]
 ORIGIN="https://29018585-collab.github.io"
@@ -265,6 +266,9 @@ def project_record(p):
 @app.post("/api/order-requests")
 def design_request():
     order=request.path=="/api/order-requests"
+    source=request.form.get("source","order" if order else "ai")
+    if source not in (("order","3d","config","plan","engineering") if order else ("ai",)):
+        abort(400)
     if request.headers.get("Origin")!="https://lerika-cabinet.onrender.com" or request.headers.get("X-Lerika-Studio")!=("5.8" if order else "5.6"):
         abort(403)
     if request.mimetype!="multipart/form-data":
@@ -337,7 +341,7 @@ def design_request():
                 name=Path(name).stem[:150]+".jpg"
         attachments.append((name,mime,image,raw))
     now=int(time.time())
-    private_brief="Название: "+title+"\nКонтакт: "+contact+"\n\n"+brief
+    private_brief="Источник заявки: "+REQUEST_SOURCES[source]+"\nНазвание: "+title+"\nКонтакт: "+contact+"\n\n"+brief
     with db() as c:
         lock(c,82003)
         if c.execute("SELECT id FROM design_requests WHERE id=?",(rid,)).fetchone():
@@ -365,6 +369,14 @@ def projects():
         for p in rows:
             private=c.execute("SELECT brief FROM design_briefs WHERE project=?",(p["id"],)).fetchone()
             if private: p["private_brief"]=private["brief"]
+            intake=c.execute("SELECT created FROM design_requests WHERE id=?",(p["id"],)).fetchone()
+            if intake:
+                first=(private["brief"].split("\n",1)[0] if private else "")
+                matched=next((k for k,v in REQUEST_SOURCES.items() if first=="Источник заявки: "+v),None)
+                if not matched:
+                    matched="ai" if private and "ЛЕРИКА LAB V5.6 / Задание дизайнеру" in private["brief"] else "legacy"
+                p["request_source"]=matched
+                p["request_created"]=intake["created"]
             p["files"]=[dict(f) for f in c.execute("SELECT id,stage,name,mime,image,public FROM files WHERE project=? ORDER BY stage,id",(p["id"],))]
         covers=[dict(x) for x in c.execute("SELECT * FROM covers")]
     return jsonify(projects=rows,covers=covers,categories=CATEGORIES,stages=STAGES)
