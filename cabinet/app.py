@@ -72,6 +72,7 @@ if not SETUP_REQUIRED:
     CREATE TABLE IF NOT EXISTS files(id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id), stage INTEGER NOT NULL CHECK(stage BETWEEN 1 AND 6), name TEXT NOT NULL, mime TEXT NOT NULL, image INTEGER NOT NULL, public INTEGER NOT NULL DEFAULT 0, data BLOB NOT NULL);
     CREATE TABLE IF NOT EXISTS covers(category INTEGER PRIMARY KEY CHECK(category BETWEEN 1 AND 8), file TEXT NOT NULL REFERENCES files(id));
     CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY CHECK(id=1), count INTEGER NOT NULL, since INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS design_requests(id TEXT PRIMARY KEY, created INTEGER NOT NULL);
     """)
 
 
@@ -152,7 +153,10 @@ def site_asset(name, limit):
 
 @app.get("/showroom/")
 def showroom():
-    html=site_asset("index.html",4*1024*1024).decode("utf-8")
+    # Keep the deployed studio UI and its submission API in the same revision.
+    local=SITE_ROOT/"index.html"
+    raw=local.read_bytes() if local.is_file() and local.stat().st_size<=4*1024*1024 else b""
+    html=(raw if b"LERIKA LAB V5.6" in raw else site_asset("index.html",4*1024*1024)).decode("utf-8")
     html=html.replace('href="https://lerika-cabinet.onrender.com"','href="/cabinet/"')
     html=html.replace('href="https://lerika-cabinet.onrender.com/"','href="/cabinet/"')
     html=html.replace('href="https://lerika-cabinet.onrender.com/cabinet/"','href="/cabinet/"')
@@ -246,6 +250,89 @@ def project_record(p):
     if not (1<=cat<=8 and 1<=stage<=6 and 1<=len(title)<=150 and len(desc)<=5000 and status in ("work","ready") and type(published) is bool): abort(400)
     if status=="ready" and stage!=6: abort(400)
     return (cat,title,desc,stage,status,int(published),int(time.time()),p)
+
+# Public intake accepts only new private drafts, never changes existing projects.
+@app.post("/api/design-requests")
+def design_request():
+    if request.headers.get("Origin")!="https://lerika-cabinet.onrender.com" or request.headers.get("X-Lerika-Studio")!="5.6":
+        abort(403)
+    if request.mimetype!="multipart/form-data":
+        abort(415)
+    rid=request.form.get("request_id","")
+    title=request.form.get("title","").strip()
+    contact=request.form.get("contact","").strip()
+    brief=request.form.get("brief","").strip()
+    room=request.form.get("room","")
+    categories={"Кухня":1,"Прихожая":3,"Спальня":4,"Гостиная":6,"Детская":5,"Гардеробная":7,"Другое":8}
+    if not (re.fullmatch(r"[a-f0-9]{32}",rid) and 1<=len(title)<=100 and 1<=len(contact)<=150 and 1<=len(brief)<=4500 and room in categories):
+        abort(400)
+    # A random request ID makes network retries idempotent.
+    with db() as c:
+        if c.execute("SELECT id FROM design_requests WHERE id=?",(rid,)).fetchone():
+            return jsonify(id=rid),200
+    files=request.files.getlist("files")
+    collages=request.files.getlist("collage")
+    if len(files)>6 or len(collages)>1 or any(k not in ("files","collage") for k in request.files):
+        abort(400)
+    if not files and not collages and "Пожелания: не указаны" in brief:
+        abort(400)
+    attachments=[]
+    total=0
+    for f in files+collages:
+        is_collage=bool(collages and f is collages[0])
+        name=Path((f.filename or "").replace(chr(92),"/")).name[:160]
+        suffix=Path(name).suffix.lower()
+        if suffix not in (".jpg",".jpeg",".png",".webp",".pdf") or (is_collage and suffix!=".png"):
+            abort(415)
+        limit=(2 if is_collage else 8)*1024*1024
+        raw=f.read(limit+1)
+        if not raw or len(raw)>limit: abort(413)
+        if not is_collage:
+            total+=len(raw)
+            if total>12*1024*1024: abort(413)
+        if suffix==".pdf":
+            if not raw.startswith(b"%PDF-"): abort(415)
+            mime="application/octet-stream"; image=0
+        else:
+            try:
+                with Image.open(io.BytesIO(raw)) as im:
+                    if im.format not in ("JPEG","PNG","WEBP") or im.width*im.height>25000000:
+                        abort(415)
+                    if is_collage and im.format!="PNG": abort(415)
+                    im=ImageOps.exif_transpose(im).convert("RGB")
+                    im.thumbnail((1800,1800))
+                    out=io.BytesIO()
+                    if is_collage:
+                        im.save(out,"PNG",optimize=True)
+                        mime="image/png"
+                    else:
+                        im.save(out,"JPEG",quality=86,optimize=True)
+                        mime="image/jpeg"
+                    raw=out.getvalue(); image=1
+            except Exception:
+                abort(415)
+            if not is_collage:
+                name=Path(name).stem[:150]+".jpg"
+        attachments.append((name,mime,image,raw))
+    now=int(time.time())
+    description="Заявка из дизайн-студии Lab V5.6\nКонтакт: "+contact+"\n\n"+brief
+    with db() as c:
+        lock(c,82003)
+        if c.execute("SELECT id FROM design_requests WHERE id=?",(rid,)).fetchone():
+            return jsonify(id=rid),200
+        # Global budget guards the existing free database against spam.
+        if c.execute("SELECT COUNT(*) AS n FROM design_requests WHERE created>?",(now-3600,)).fetchone()["n"]>=12:
+            abort(429)
+        if c.execute("SELECT COUNT(*) AS n FROM design_requests WHERE created>?",(now-86400,)).fetchone()["n"]>=40:
+            abort(429)
+        used=c.execute("SELECT COALESCE(SUM(length(data)),0) AS bytes_used FROM files").fetchone()["bytes_used"]
+        if used+sum(len(v[3]) for v in attachments)>350*1024*1024: abort(413)
+        c.execute("INSERT INTO projects(category,title,description,stage,status,published,updated,id) VALUES(?,?,?,?,?,?,?,?)",(categories[room],"Заявка · "+title,description,1,"work",0,now,rid))
+        for name,mime,image,raw in attachments:
+            # Attachments (including the collage) are private by default.
+            c.execute("INSERT INTO files VALUES(?,?,?,?,?,?,0,?)",(secrets.token_hex(16),rid,1,name,mime,image,raw))
+        c.execute("INSERT INTO design_requests VALUES(?,?)",(rid,now))
+    return jsonify(id=rid),201
 
 @app.get("/api/projects")
 @admin
