@@ -40,8 +40,8 @@ assert.equal(await page.locator("#lz-full").isVisible(),true);
 assert.match(await page.locator("#lz-selected").textContent(),/№1/);
 const panel=async kind=>{await page.locator('[data-lz-panel="'+kind+'"]').tap();await page.locator("#lz-sheet").waitFor({state:"visible"})};
 const closePanel=async()=>{await page.locator("#lz-sheet-close").tap();await page.locator("#lz-sheet").waitFor({state:"hidden"})};
-await panel("material");await page.locator("#lz-field-t").selectOption("18");await page.locator("#lz-sheet-body").getByRole("button",{name:"Применить",exact:true}).tap();assert.match(await page.locator("#lz-sheet-status").textContent(),/применены/);await closePanel();
-assert.equal(await page.locator("#lp-ft").inputValue(),"18");
+await panel("material");await page.locator("#lz-field-t").selectOption("18");await page.locator("#lz-field-bodyM").selectOption("МДФ");await page.locator("#lz-field-faceM").selectOption("МДФ эмаль");await page.locator("#lz-field-topM").selectOption("Массив дерева");await page.locator("#lz-sheet-body").getByRole("button",{name:"Применить",exact:true}).tap();assert.match(await page.locator("#lz-sheet-status").textContent(),/применены/);await closePanel();
+assert.equal(await page.locator("#lp-ft").inputValue(),"18");assert.equal(await page.locator("#lp-bodyM").inputValue(),"МДФ");assert.equal(await page.locator("#lp-faceM").inputValue(),"МДФ эмаль");assert.equal(await page.locator("#lp-topM").inputValue(),"Массив дерева");
 await panel("parts");assert.ok(await page.locator(".lz-part-row").count()>0);assert.match(await page.locator("#lz-sheet-body").textContent(),/м²/);
 await page.locator("#lz-field-w").fill("1700");await page.locator("#lz-sheet-body").getByRole("button",{name:"Применить размеры"}).click();
 assert.equal(await page.locator("#lp-fw").inputValue(),"1700");
@@ -52,7 +52,7 @@ const r=await page.locator("#lz-stage").boundingBox(),px=r.x+r.width/2,py=r.y+r.
 await cdp.send("Input.dispatchTouchEvent",{type:"touchStart",touchPoints:[{x:px-30,y:py,id:1},{x:px+30,y:py,id:2}]});await cdp.send("Input.dispatchTouchEvent",{type:"touchMove",touchPoints:[{x:px-65,y:py,id:1},{x:px+65,y:py,id:2}]});await cdp.send("Input.dispatchTouchEvent",{type:"touchEnd",touchPoints:[]});
 assert.ok(parseInt((await page.locator("#lz-foot").textContent()).match(/\d+%/)[0])>150);
 await panel("color");await page.keyboard.press("Escape");assert.equal(await page.locator("#lz-sheet").isVisible(),false);assert.equal(await page.locator("#lz-dialog").isVisible(),true);
-await page.locator("#lz-close").tap();assert.ok(await page.locator("#lp-csv").isEnabled());await page.locator("#lp-demo").click();await page.locator("#lp-3d").click();
+await page.locator("#lz-close").tap();assert.ok(await page.locator("#lp-csv").isEnabled());await page.locator("#lp-local-save").click();await page.locator("#lp-clear").click();await page.locator("#lp-local-load").click();assert.equal(await page.locator("#lp-bodyM").inputValue(),"МДФ");await page.locator("#lp-demo").click();await page.locator("#lp-3d").click();
 console.log("PASS V5.18 four live sheets, thickness, dimensions, validation, 68 decors, rotation, camera, pinch, Escape");
 
 await page.locator("#lp-camera-right").click();await page.locator("#lp-view").screenshot({path:"planner-3d-mobile.png"});
