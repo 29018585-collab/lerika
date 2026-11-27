@@ -193,8 +193,13 @@ class StudioTests(unittest.TestCase):
             for name in src.namelist():
                 data=src.read(name)
                 if name=="xl/worksheets/sheet1.xml":
-                    self.assertIn(b"<f>1000*1.2</f><v></v>",data)
-                    data=data.replace(b"<f>1000*1.2</f><v></v>",b"<f>1000*1.2</f><v>1200</v>")
+                    import xml.etree.ElementTree as ET
+                    root=ET.fromstring(data)
+                    ns={"s":"http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+                    cell=root.find(".//s:c[@r='C4']",ns)
+                    self.assertEqual(cell.find("s:f",ns).text,"1000*1.2")
+                    cell.find("s:v",ns).text="1200"
+                    data=ET.tostring(root,encoding="utf-8")
                 dst.writestr(name,data)
         result=upload(cached.getvalue(),"price.xlsx")
         self.assertEqual(result.status_code,200,result.get_data(as_text=True))
