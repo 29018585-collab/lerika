@@ -1,0 +1,32 @@
+name: LERIKA production read-only smoke
+on:
+  push:
+    branches: [lerika-v520-ingress-qa]
+    paths: ['.github/workflows/lerika-production-smoke.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check public pages and unauthenticated access
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=https://lerika-cabinet.onrender.com
+          check() {
+            local path="$1" expected="$2" code
+            code=$(curl -sS --max-time 60 -o /dev/null -w '%{http_code}' "$BASE$path")
+            printf '%s: %s (expected %s)\n' "$path" "$code" "$expected"
+            test "$code" = "$expected"
+          }
+          check / 302
+          check /showroom/ 200
+          check /cabinet/ 200
+          check /public/prices 200
+          check /public/portfolio 200
+          check /api/projects 401
+          check /api/client/session 401
+          echo 'PASS: read-only production smoke; no customer submissions or authenticated writes'
