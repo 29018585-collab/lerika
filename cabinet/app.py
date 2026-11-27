@@ -409,7 +409,7 @@ def price_rows(file):
                 raise PriceImportError(1,"Допустимо до 200 строк и 50 столбцов")
             # Bound actual iteration even if worksheet dimension metadata is absent.
             rows=list(ws.iter_rows(min_row=1,max_row=201,max_col=51,values_only=True))
-            if any(x is not None for x in rows[-1]) or any(row[-1] is not None for row in rows):
+            if (len(rows)>200 and any(x is not None for x in rows[200])) or any(len(row)>50 and row[50] is not None for row in rows):
                 raise PriceImportError(1,"Допустимо до 200 строк и 50 столбцов")
             rows=[row[:50] for row in rows[:200]]
             # Cached Excel values are read without executing formulas. A missing
