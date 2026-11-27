@@ -13,3 +13,18 @@ if(button)button.addEventListener("click",async()=>{
 });
 update();
 })();
+
+if(document.getElementById('loginForm')){
+
+(()=>{"use strict";
+const button=document.getElementById("lerika-share"),panel=document.getElementById("lerika-share-panel"),field=document.getElementById("lerika-share-url"),status=document.getElementById("lerika-share-status"),copy=document.getElementById("lerika-share-copy"),close=document.getElementById("lerika-share-close");
+if(!button||!panel||!field||!status||!copy||!close)return;
+const url="https://lerika-cabinet.onrender.com/showroom/";
+field.value=url;
+function show(){panel.hidden=false;button.setAttribute("aria-expanded","true");status.textContent="";field.focus();field.select()}
+function hide(){panel.hidden=true;button.setAttribute("aria-expanded","false");button.focus()}
+button.addEventListener("click",async()=>{if(!panel.hidden){hide();return}if(typeof navigator.share==="function"){try{await navigator.share({title:"ЛериКа — мебель на заказ",text:"Каталог, мебель и лаборатория дизайна ЛериКа",url});return}catch(e){if(e&&e.name==="AbortError")return}}show()});
+copy.addEventListener("click",async()=>{try{if(navigator.clipboard&&navigator.clipboard.writeText){await navigator.clipboard.writeText(url);status.textContent="Ссылка скопирована.";return}}catch(e){}field.focus();field.select();let ok=false;try{ok=document.execCommand("copy")}catch(e){}status.textContent=ok?"Ссылка скопирована.":"Ссылка выделена. Скопируйте её вручную."});
+close.addEventListener("click",hide);panel.addEventListener("keydown",e=>{if(e.key==="Escape")hide()});
+})();
+}
