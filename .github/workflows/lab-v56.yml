@@ -82,6 +82,9 @@ jobs:
       - name: Independent 3D depth and ownership regression
         if: ${{ hashFiles('tests/depth-browser.cjs') != '' }}
         run: node tests/depth-browser.cjs
+      - name: V5.23 public assets and administrator number search
+        if: ${{ hashFiles('tests/request-number-browser.cjs') != '' }}
+        run: node tests/request-number-browser.cjs
       - name: Engineering mobile browser tests
         if: ${{ hashFiles('tests/engineering-browser.cjs') != '' }}
         run: node tests/engineering-browser.cjs
