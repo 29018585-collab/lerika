@@ -3,6 +3,10 @@ from werkzeug.security import generate_password_hash
 from PIL import Image
 tmp=tempfile.TemporaryDirectory()
 os.environ.update(DATA_DIR=tmp.name,SESSION_SECRET="test-secret-not-for-production-123456",ADMIN_PASSWORD_HASH=generate_password_hash("test-only-password"))
+if os.environ.get("TEST_DATABASE_URL"):
+    os.environ["DATABASE_URL"]=os.environ["TEST_DATABASE_URL"]
+else:
+    os.environ.pop("DATABASE_URL",None)
 from app import app
 
 class PrivacyTests(unittest.TestCase):
