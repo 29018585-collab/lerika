@@ -1,7 +1,7 @@
 "use strict";
 const $=id=>document.getElementById(id);
 let saving=false,view="projects",requestFilter="all";
-const requestLabels={"3d":"3D-конструктор","ai":"Дизайн-студия","config":"Конфигуратор","plan":"Планировщик помещения","engineering":"Инженерная лаборатория","order":"Прямой заказ","legacy":"Источник не указан","support":"Поддержка","partner":"Сотрудничество"};
+const requestLabels={"project":"Коллекция изделий","3d":"3D-конструктор","ai":"Дизайн-студия","config":"Конфигуратор","plan":"Планировщик помещения","engineering":"Инженерная лаборатория","order":"Прямой заказ","legacy":"Источник не указан","support":"Поддержка","partner":"Сотрудничество"};
 let csrf="",data={projects:[],categories:[],stages:[],covers:[]},current=null;
 function msg(t){$("message").textContent=t;const local=$("editorMessage");if(local&&!$("editor").hidden)local.textContent=t}
 function editorNotice(){let p=$("editorMessage");if(!p){p=el("p");p.id="editorMessage";p.setAttribute("role","status");p.setAttribute("aria-live","polite");$("projectForm").append(p)}return p}

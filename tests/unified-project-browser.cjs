@@ -65,6 +65,7 @@ assert.match(await p.locator("#project-save-status").textContent(),/Восста
 assert.equal(await p.evaluate(()=>localStorage.getItem("lerika-project-v519-recovery")),JSON.stringify(damaged));
 const sourceCases=await p.evaluate(()=>{const s=LerikaProject.intakeSource;return [s([{source:"config"}],null),s([{source:"3d"},{source:"3d"}],null),s([{source:"3d"},{source:"config"}],null),s([{source:"unknown"}],null),s([{source:"config"}],{})]});assert.deepEqual(sourceCases,["config","3d","project","project","plan"]);
 assert.equal(await p.locator('#lo-source option[value="project"]').count(),1);
+await p.evaluate(()=>LerikaProject.open("basket"));await p.locator("#estimate-panel").waitFor({state:"visible"});await p.locator("#estimate-order").click();await p.locator("#lo-panel").waitFor({state:"visible"});assert.equal(await p.locator("#lo-source").inputValue(),"project","mixed collection reaches actual order form with accurate source");
 assert.ok((await p.locator(".learning-lesson").allTextContents()).join(" ").includes("Сохранить и рассчитать смету"));
 assert.doesNotMatch((await p.locator(".learning-lesson").allTextContents()).join(" "),/К итоговому расчёту|введите их в соответствующие поля|Отправьте заявку с планом/);
 assert.equal(await p.getByText("AI Lab · дизайн-студия",{exact:true}).count(),0);
