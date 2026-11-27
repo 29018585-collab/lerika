@@ -63,3 +63,7 @@ jobs:
       - name: Engineering mobile browser tests
         if: ${{ hashFiles('tests/engineering-browser.cjs') != '' }}
         run: node tests/engineering-browser.cjs
+
+      - name: Responsive layout regression
+        if: ${{ hashFiles('tests/mobile-layout.cjs') != '' }}
+        run: node tests/mobile-layout.cjs
