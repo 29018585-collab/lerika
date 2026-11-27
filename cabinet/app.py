@@ -1,10 +1,11 @@
-import os, sqlite3, secrets, time, io, json, re, hashlib, base64, mimetypes, csv, zipfile
+import os, sqlite3, secrets, time, io, json, re, hashlib, base64, mimetypes, csv, zipfile, hmac, ipaddress
 from decimal import Decimal, InvalidOperation
 from urllib.request import urlopen, Request
 from urllib.parse import quote
 from threading import Lock
 from pathlib import Path
 from functools import wraps
+from contextlib import contextmanager
 from flask import Flask, request, session, abort, jsonify, render_template, send_file, redirect
 from werkzeug.security import check_password_hash, generate_password_hash
 from PIL import Image, ImageOps
@@ -53,13 +54,20 @@ class PostgresDB:
     def commit(self):
         self.conn.commit()
 
+@contextmanager
 def db():
     if DATABASE_URL:
-        return PostgresDB()
+        with PostgresDB() as c:
+            yield c
+        return
     c=sqlite3.connect(DB,timeout=10)
-    c.row_factory=sqlite3.Row
-    c.execute("PRAGMA foreign_keys=ON")
-    return c
+    try:
+        c.row_factory=sqlite3.Row
+        c.execute("PRAGMA foreign_keys=ON")
+        with c:
+            yield c
+    finally:
+        c.close()
 def lock(c,key):
     if DATABASE_URL:
         c.execute("SELECT pg_advisory_xact_lock(?)",(key,))
@@ -89,6 +97,10 @@ if not SETUP_REQUIRED:
         c.execute("INSERT INTO design_briefs VALUES(?,?)",(p["id"],"Название: "+p["title"]+"\n"+p["description"]))
         c.execute("UPDATE projects SET title=?,description=?,published=0 WHERE id=?",("Заявка · "+p["id"][:6],"Заявка из дизайн-студии ЛериКа",p["id"]))
         c.execute("DELETE FROM covers WHERE file IN (SELECT id FROM files WHERE project=?)",(p["id"],))
+    # Intake records and their attachments must never be public.
+    c.execute("UPDATE projects SET published=0 WHERE id IN (SELECT id FROM design_requests)")
+    c.execute("UPDATE files SET public=0 WHERE project IN (SELECT id FROM design_requests)")
+    c.execute("DELETE FROM covers WHERE file IN (SELECT id FROM files WHERE project IN (SELECT id FROM design_requests))")
 
 
 @app.before_request
@@ -235,18 +247,11 @@ def login():
     password=str((request.json or {}).get("password",""))
     if len(password)>512: abort(400)
     now=int(time.time())
-    with db() as c:
-        lock(c,82002)
-        row=c.execute("SELECT count,since FROM attempts WHERE id=1").fetchone()
-        count=row["count"] if row and now-row["since"]<900 else 0
-        since=row["since"] if count else now
-        if count>=8: abort(429)
-        if not check_password_hash(PASSWORD,password):
-            c.execute("INSERT INTO attempts VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET count=excluded.count,since=excluded.since",(count+1,since))
-            c.commit()
-            abort(401)
-        c.execute("DELETE FROM attempts WHERE id=1")
-    session.clear()
+    key=limit_key("admin-login")
+    reserve_limits([(key,8,900)])
+    if not check_password_hash(PASSWORD,password):
+        abort(401)
+    clear_limit(key)
     session.update(admin=True,csrf=secrets.token_urlsafe(32),login=now)
     return jsonify(csrf=session["csrf"])
 
@@ -258,7 +263,7 @@ def get_session():
 @app.post("/logout")
 @admin
 def logout():
-    session.clear()
+    for key in ("admin","csrf","login"): session.pop(key,None)
     return jsonify(ok=True)
 
 
@@ -266,15 +271,50 @@ def client_origin():
     if request.headers.get("Origin")!="https://lerika-cabinet.onrender.com" or request.headers.get("X-Lerika-Client")!="1":
         abort(403)
 
-def client_limit(action,maximum,period):
+def sender_address():
+    # Trust a configured edge header only from an internal proxy peer.
+    # On a direct deployment, ignore caller-supplied forwarding headers.
+    peer=request.remote_addr or ""
+    try: address=ipaddress.ip_address(peer)
+    except ValueError: return "unknown"
+    header=os.environ.get("LERIKA_TRUSTED_CLIENT_IP_HEADER","CF-Connecting-IP" if os.environ.get("RENDER") else "")
+    if header and (address.is_private or address.is_loopback):
+        forwarded=request.headers.get(header,"")
+        if forwarded:
+            try: address=ipaddress.ip_address(forwarded.strip())
+            except ValueError: pass
+    if isinstance(address,ipaddress.IPv6Address) and address.ipv4_mapped:
+        address=address.ipv4_mapped
+    if isinstance(address,ipaddress.IPv6Address):
+        return str(ipaddress.ip_network(str(address)+"/64",strict=False))
+    return str(address)
+
+def limit_key(action,identity=""):
+    digest=hmac.new(KEY.encode(),(sender_address()+"\x00"+identity).encode(),hashlib.sha256).hexdigest()
+    return action+":"+digest
+
+def reserve_limits(rules):
     now=int(time.time())
     with db() as c:
         lock(c,82005)
-        row=c.execute("SELECT count,since FROM client_limits WHERE action=?",(action,)).fetchone()
-        count=row["count"] if row and now-row["since"]<period else 0
-        since=row["since"] if count else now
-        if count>=maximum: abort(429)
-        c.execute("INSERT INTO client_limits VALUES(?,?,?) ON CONFLICT(action) DO UPDATE SET count=excluded.count,since=excluded.since",(action,count+1,since))
+        c.execute("DELETE FROM client_limits WHERE since<?",(now-86400,))
+        pending=[]
+        for key,maximum,period in rules:
+            row=c.execute("SELECT count,since FROM client_limits WHERE action=?",(key,)).fetchone()
+            count=row["count"] if row and now-row["since"]<period else 0
+            since=row["since"] if count else now
+            if count>=maximum: abort(429)
+            pending.append((key,count+1,since))
+        for rec in pending:
+            c.execute("INSERT INTO client_limits VALUES(?,?,?) ON CONFLICT(action) DO UPDATE SET count=excluded.count,since=excluded.since",rec)
+
+def clear_limit(key):
+    with db() as c:
+        lock(c,82005)
+        c.execute("DELETE FROM client_limits WHERE action=?",(key,))
+
+def client_limit(action,maximum,period):
+    reserve_limits([(limit_key(action),maximum,period)])
 
 def client_id():
     return session.get("client") if time.time()-session.get("client_login",0)<43200 else None
@@ -294,7 +334,6 @@ def client_register():
         lock(c,82006)
         if c.execute("SELECT id FROM clients WHERE email=?",(email,)).fetchone(): abort(409)
         c.execute("INSERT INTO clients VALUES(?,?,?,?,?)",(cid,email,name,hashed,int(time.time())))
-    session.clear()
     session.update(client=cid,client_login=int(time.time()))
     return jsonify(ok=True),201
 
@@ -306,11 +345,12 @@ def client_login():
     if not isinstance(d,dict) or not all(isinstance(d.get(k),str) for k in ("email","password")): abort(400)
     email=d["email"].strip().lower();password=d["password"]
     if not (1<=len(email)<=150 and 1<=len(password)<=128): abort(400)
-    client_limit("login",50,900)
+    key=limit_key("client-login-account",email)
+    reserve_limits([(limit_key("client-login"),50,900),(key,8,900)])
     with db() as c: row=c.execute("SELECT id,password_hash FROM clients WHERE email=?",(email,)).fetchone()
     valid=check_password_hash(row["password_hash"] if row else PASSWORD,password)
     if not row or not valid: abort(401)
-    session.clear()
+    clear_limit(key)
     session.update(client=row["id"],client_login=int(time.time()))
     return jsonify(ok=True)
 
@@ -432,9 +472,7 @@ def design_request():
     with db() as c:
         if c.execute("SELECT id FROM design_requests WHERE id=?",(rid,)).fetchone():
             return jsonify(id=rid),200
-    now=int(time.time())
-    with db() as c:
-        if c.execute("SELECT COUNT(*) AS n FROM design_requests WHERE created>?",(now-3600,)).fetchone()["n"]>=12 or c.execute("SELECT COUNT(*) AS n FROM design_requests WHERE created>?",(now-86400,)).fetchone()["n"]>=40: abort(429)
+    reserve_limits([(limit_key("intake-hour"),12,3600),(limit_key("intake-day"),40,86400)])
     files=request.files.getlist("files")
     collages=request.files.getlist("collage")
     if len(files)>(10 if order else 6) or len(collages)>(0 if order else 1) or any(k not in ("files","collage") for k in request.files):
@@ -493,11 +531,7 @@ def design_request():
         lock(c,82003)
         if c.execute("SELECT id FROM design_requests WHERE id=?",(rid,)).fetchone():
             return jsonify(id=rid),200
-        # Global budget guards the existing free database against spam.
-        if c.execute("SELECT COUNT(*) AS n FROM design_requests WHERE created>?",(now-3600,)).fetchone()["n"]>=12:
-            abort(429)
-        if c.execute("SELECT COUNT(*) AS n FROM design_requests WHERE created>?",(now-86400,)).fetchone()["n"]>=40:
-            abort(429)
+        # Sender limits were reserved before attachment processing; retain the storage cap.
         used=c.execute("SELECT COALESCE(SUM(length(data)),0) AS bytes_used FROM files").fetchone()["bytes_used"]
         if used+sum(len(v[3]) for v in attachments)>350*1024*1024: abort(413)
         c.execute("INSERT INTO projects(category,title,description,stage,status,published,updated,id) VALUES(?,?,?,?,?,?,?,?)",(categories[room],("Заказ" if order else "Заявка")+" · "+room+" · "+rid[:6],"Заявка на заказ ЛериКа" if order else "Заявка из дизайн-студии ЛериКа",1,"work",0,now,rid))
@@ -547,6 +581,8 @@ def create_project():
 def edit_project(p):
     rec=project_record(p)
     with db() as c:
+        lock(c,82003)
+        if rec[5] and c.execute("SELECT id FROM design_requests WHERE id=?",(p,)).fetchone(): abort(403)
         if not c.execute("UPDATE projects SET category=?,title=?,description=?,stage=?,status=?,published=?,updated=? WHERE id=?",rec).rowcount: abort(404)
         c.execute("DELETE FROM covers WHERE file IN (SELECT id FROM files WHERE project=?) AND category<>?",(p,rec[0]))
     return jsonify(ok=True)
@@ -585,9 +621,11 @@ def file_visibility(fid):
     data=request.get_json()
     if not isinstance(data,dict) or type(data.get("public")) is not bool: abort(400)
     with db() as c:
-        f=c.execute("SELECT image FROM files WHERE id=?",(fid,)).fetchone()
+        lock(c,82003)
+        f=c.execute("SELECT image,project FROM files WHERE id=?",(fid,)).fetchone()
         if not f: abort(404)
         if data["public"] and not f["image"]: abort(400)
+        if data["public"] and c.execute("SELECT id FROM design_requests WHERE id=?",(f["project"],)).fetchone(): abort(403)
         c.execute("UPDATE files SET public=? WHERE id=?",(int(data["public"]),fid))
         if not data["public"]: c.execute("DELETE FROM covers WHERE file=?",(fid,))
     return jsonify(ok=True)
@@ -598,7 +636,7 @@ def set_cover(cat):
     data=request.get_json()
     if not isinstance(data,dict) or not isinstance(data.get("file"),str) or not 1<=cat<=8: abort(400)
     with db() as c:
-        f=c.execute("SELECT f.id FROM files f JOIN projects p ON p.id=f.project WHERE f.id=? AND f.image=1 AND f.public=1 AND p.published=1 AND p.category=?",(data["file"],cat)).fetchone()
+        f=c.execute("SELECT f.id FROM files f JOIN projects p ON p.id=f.project WHERE f.id=? AND f.image=1 AND f.public=1 AND p.published=1 AND NOT EXISTS (SELECT 1 FROM design_requests dr WHERE dr.id=p.id) AND p.category=?",(data["file"],cat)).fetchone()
         if not f: abort(400)
         c.execute("INSERT INTO covers VALUES(?,?) ON CONFLICT(category) DO UPDATE SET file=excluded.file",(cat,f["id"]))
     return jsonify(ok=True)
@@ -610,19 +648,64 @@ def private_file(fid):
     if not f: abort(404)
     return send_file(io.BytesIO(f["data"]),mimetype=f["mime"],as_attachment=not f["image"],download_name=f["name"])
 
+def delete_project_rows(c,p):
+    c.execute("DELETE FROM covers WHERE file IN (SELECT id FROM files WHERE project=?)",(p,))
+    c.execute("DELETE FROM files WHERE project=?",(p,))
+    c.execute("DELETE FROM client_requests WHERE project=?",(p,))
+    c.execute("DELETE FROM design_briefs WHERE project=?",(p,))
+    c.execute("DELETE FROM design_requests WHERE id=?",(p,))
+    c.execute("DELETE FROM projects WHERE id=?",(p,))
+
+def confirm_delete():
+    if not request.is_json or not isinstance(request.json,dict) or request.json.get("confirm") is not True:
+        abort(400)
+
+@app.delete("/api/files/<fid>")
+@admin
+def delete_file(fid):
+    confirm_delete()
+    with db() as c:
+        lock(c,82003)
+        if not c.execute("SELECT id FROM files WHERE id=?",(fid,)).fetchone(): abort(404)
+        c.execute("DELETE FROM covers WHERE file=?",(fid,))
+        c.execute("DELETE FROM files WHERE id=?",(fid,))
+    return jsonify(ok=True)
+
+@app.delete("/api/projects/<p>")
+@admin
+def delete_project(p):
+    confirm_delete()
+    with db() as c:
+        lock(c,82003)
+        if not c.execute("SELECT id FROM projects WHERE id=?",(p,)).fetchone(): abort(404)
+        delete_project_rows(c,p)
+    return jsonify(ok=True)
+
+@app.delete("/api/clients/<cid>")
+@admin
+def delete_client(cid):
+    confirm_delete()
+    with db() as c:
+        lock(c,82003)
+        if not c.execute("SELECT id FROM clients WHERE id=?",(cid,)).fetchone(): abort(404)
+        projects=list(c.execute("SELECT project FROM client_requests WHERE client=?",(cid,)))
+        for p in projects: delete_project_rows(c,p["project"])
+        c.execute("DELETE FROM clients WHERE id=?",(cid,))
+    return jsonify(ok=True,deleted_requests=len(projects))
+
 @app.get("/public/portfolio")
 def public_portfolio():
     with db() as c:
         # Drafts and private attachments never leave authenticated endpoints.
-        rows=[dict(p) for p in c.execute("SELECT id,category,title,description,stage,status FROM projects WHERE published=1 ORDER BY updated DESC")]
+        rows=[dict(p) for p in c.execute("SELECT id,category,title,description,stage,status FROM projects WHERE published=1 AND NOT EXISTS (SELECT 1 FROM design_requests dr WHERE dr.id=projects.id) ORDER BY updated DESC")]
         for p in rows:
             p["photos"]=[dict(f) for f in c.execute("SELECT id,stage FROM files WHERE project=? AND image=1 AND public=1 ORDER BY stage,id",(p["id"],))]
-        covers={str(f["category"]):f["file"] for f in c.execute("SELECT c.* FROM covers c JOIN files f ON f.id=c.file JOIN projects p ON p.id=f.project WHERE f.public=1 AND f.image=1 AND p.published=1 AND p.category=c.category")}
+        covers={str(f["category"]):f["file"] for f in c.execute("SELECT c.* FROM covers c JOIN files f ON f.id=c.file JOIN projects p ON p.id=f.project WHERE f.public=1 AND f.image=1 AND p.published=1 AND NOT EXISTS (SELECT 1 FROM design_requests dr WHERE dr.id=p.id) AND p.category=c.category")}
     return jsonify(projects=rows,covers=covers)
 
 @app.get("/public/photos/<fid>")
 def public_photo(fid):
     with db() as c:
-        f=c.execute("SELECT f.data,f.mime FROM files f JOIN projects p ON p.id=f.project WHERE f.id=? AND f.image=1 AND f.public=1 AND p.published=1",(fid,)).fetchone()
+        f=c.execute("SELECT f.data,f.mime FROM files f JOIN projects p ON p.id=f.project WHERE f.id=? AND f.image=1 AND f.public=1 AND p.published=1 AND NOT EXISTS (SELECT 1 FROM design_requests dr WHERE dr.id=p.id)",(fid,)).fetchone()
     if not f: abort(404)
     return send_file(io.BytesIO(f["data"]),mimetype=f["mime"])

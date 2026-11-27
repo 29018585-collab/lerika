@@ -4,7 +4,10 @@ from pathlib import Path
 from PIL import Image
 tmp=tempfile.TemporaryDirectory()
 os.environ.pop("RENDER",None)
-os.environ["DATABASE_URL"]=""
+# The QA PostgreSQL target is intentionally fixed to a disposable local CI service.
+# Never accept a production DATABASE_URL in this destructive test suite.
+QA_POSTGRES=os.environ.get("LERIKA_QA_POSTGRES")=="1"
+os.environ["DATABASE_URL"]="postgresql://lerika_qa:lerika_qa@127.0.0.1:5432/lerika_qa" if QA_POSTGRES else ""
 os.environ["DATA_DIR"]=tmp.name
 os.environ["SESSION_SECRET"]="local-test-secret-not-for-production-12345"
 os.environ["ADMIN_PASSWORD"]="local-test-password-only"
@@ -25,8 +28,8 @@ class StudioTests(unittest.TestCase):
                 c.execute("DELETE FROM "+table)
     def data(self,rid=None):
         return dict(request_id=rid or secrets.token_hex(16),consent="yes",title="Тест кухни",room="Кухня",contact="test@example.invalid",brief="Пожелания: тест")
-    def submit(self,data,headers=HEADERS):
-        return self.client.post("/api/design-requests",data=data,headers=headers,base_url=ORIGIN,content_type="multipart/form-data")
+    def submit(self,data,headers=HEADERS,ip="198.51.100.1"):
+        return self.client.post("/api/design-requests",data=data,headers=headers,base_url=ORIGIN,content_type="multipart/form-data",environ_overrides={"REMOTE_ADDR":ip})
     def test_submit_with_files_collage_and_privacy(self):
         d=self.data()
         d["files"]=[(io.BytesIO(png()),"photo.png"),(io.BytesIO(b"%PDF-1.4\n%%EOF"),"drawing.pdf")]
@@ -62,11 +65,8 @@ class StudioTests(unittest.TestCase):
         csrf=login.json["csrf"]
         p=self.client.get("/api/projects",base_url=ORIGIN).json["projects"][0]
         self.assertIn("test@example.invalid",p["private_brief"])
-        self.assertEqual(self.client.put("/api/projects/"+rid,base_url=ORIGIN,headers={"X-CSRF":csrf},json={**p,"published":True}).status_code,200)
-        public=self.client.get("/public/portfolio").json["projects"][0]
-        self.assertNotIn("private_brief",public)
-        self.assertNotIn("test@example.invalid",str(public))
-        self.assertNotIn("Пожелания: тест",str(public))
+        self.assertEqual(self.client.put("/api/projects/"+rid,base_url=ORIGIN,headers={"X-CSRF":csrf},json={**p,"published":True}).status_code,403)
+        self.assertEqual(self.client.get("/public/portfolio").json["projects"],[])
     def test_universal_order_originals_and_privacy(self):
         import zipfile
         z=io.BytesIO()
@@ -192,6 +192,183 @@ class StudioTests(unittest.TestCase):
     def test_rate_limit(self):
         for i in range(12):self.assertEqual(self.submit(self.data()).status_code,201)
         self.assertEqual(self.submit(self.data()).status_code,429)
+        self.assertEqual(self.submit(self.data(),ip="198.51.100.2").status_code,201)
+    def test_v520_shared_intake_hour_and_day_quotas_per_sender(self):
+        from app import limit_key
+        from unittest.mock import patch
+        ip="198.51.100.1"
+        h={"Origin":ORIGIN,"X-Lerika-Studio":"5.8"}
+        def order(sender):
+            return self.client.post("/api/order-requests",data=self.data(),headers=h,base_url=ORIGIN,content_type="multipart/form-data",environ_overrides={"REMOTE_ADDR":sender})
+        for i in range(6):
+            self.assertEqual(self.submit(self.data(),ip=ip).status_code,201)
+            self.assertEqual(order(ip).status_code,201)
+        self.assertEqual(order(ip).status_code,429)
+        self.assertEqual(self.submit(self.data(),ip="198.51.100.2").status_code,201)
+        with app.test_request_context("/",environ_overrides={"REMOTE_ADDR":ip}):
+            hour=limit_key("intake-hour")
+            day=limit_key("intake-day")
+        # Simulate the remaining daily quota after an hourly window has elapsed.
+        with db() as c:
+            c.execute("DELETE FROM client_limits WHERE action=?",(hour,))
+            c.execute("UPDATE client_limits SET count=40 WHERE action=?",(day,))
+        self.assertEqual(self.submit(self.data(),ip=ip).status_code,429)
+        self.assertEqual(order("198.51.100.2").status_code,201)
+
+    def test_v520_delete_project_isolated_and_confirmed(self):
+        first=self.data();first["files"]=[(io.BytesIO(png()),"one.png")]
+        rid=self.submit(first).json["id"]
+        other=self.submit(self.data()).json["id"]
+        login=self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
+        h={"X-CSRF":login.json["csrf"]}
+        self.assertEqual(self.client.delete("/api/projects/"+rid,json={"confirm":True},base_url=ORIGIN).status_code,403)
+        self.assertEqual(self.client.delete("/api/projects/"+rid,json={"confirm":False},headers=h,base_url=ORIGIN).status_code,400)
+        self.assertEqual(self.client.delete("/api/projects/"+rid,json={"confirm":True},headers=h,base_url=ORIGIN).status_code,200)
+        self.assertEqual(self.client.delete("/api/projects/"+rid,json={"confirm":True},headers=h,base_url=ORIGIN).status_code,404)
+        with db() as c:
+            for table,column in (("projects","id"),("design_requests","id"),("design_briefs","project"),("files","project"),("client_requests","project")):
+                self.assertEqual(c.execute("SELECT COUNT(*) AS n FROM "+table+" WHERE "+column+"=?",(rid,)).fetchone()["n"],0)
+            self.assertIsNotNone(c.execute("SELECT id FROM projects WHERE id=?",(other,)).fetchone())
+
+    def test_v520_client_global_quota_isolated_by_sender(self):
+        from app import limit_key
+        ip="198.51.100.1"
+        h={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        d={"name":"Test","email":"a@example.invalid","password":"long-test-password-123","consent":True}
+        self.assertEqual(self.client.post("/api/client/register",json=d,headers=h,base_url=ORIGIN).status_code,201)
+        # Seed the exhausted per-sender aggregate counter, not a global counter.
+        with app.test_request_context("/",environ_overrides={"REMOTE_ADDR":ip}):
+            key=limit_key("client-login")
+            registration=limit_key("register")
+        import time
+        with db() as c:
+            for k,n in ((key,50),(registration,20)):
+                c.execute("INSERT INTO client_limits VALUES(?,?,?) ON CONFLICT(action) DO UPDATE SET count=excluded.count,since=excluded.since",(k,n,int(time.time())))
+        self.assertEqual(self.client.post("/api/client/login",json=d,headers=h,base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":ip}).status_code,429)
+        self.assertEqual(self.client.post("/api/client/login",json=d,headers=h,base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":"198.51.100.2"}).status_code,200)
+        d["email"]="b@example.invalid"
+        self.assertEqual(self.client.post("/api/client/register",json=d,headers=h,base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":ip}).status_code,429)
+        self.assertEqual(self.client.post("/api/client/register",json=d,headers=h,base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":"198.51.100.2"}).status_code,201)
+
+    def test_v520_login_sender_isolation(self):
+        for _ in range(8):
+            self.assertEqual(self.client.post("/login",json={"password":"wrong"},base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":"198.51.100.1"}).status_code,401)
+        self.assertEqual(self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":"198.51.100.1"}).status_code,429)
+        self.assertEqual(self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":"198.51.100.2"}).status_code,200)
+        headers={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        d={"name":"Test","email":"a@example.invalid","password":"long-test-password-123","consent":True}
+        self.assertEqual(self.client.post("/api/client/register",json=d,headers=headers,base_url=ORIGIN).status_code,201)
+        for _ in range(8):
+            self.assertEqual(self.client.post("/api/client/login",json={**d,"password":"wrong"},headers=headers,base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":"198.51.100.1"}).status_code,401)
+        self.assertEqual(self.client.post("/api/client/login",json=d,headers=headers,base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":"198.51.100.1"}).status_code,429)
+        self.assertEqual(self.client.post("/api/client/login",json=d,headers=headers,base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":"198.51.100.2"}).status_code,200)
+        self.assertEqual(self.client.get("/api/projects",base_url=ORIGIN).status_code,200)
+
+    def test_v520_private_files_and_delete(self):
+        headers={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        d={"name":"Test","email":"a@example.invalid","password":"long-test-password-123","consent":True}
+        self.assertEqual(self.client.post("/api/client/register",json=d,headers=headers,base_url=ORIGIN).status_code,201)
+        order=self.data();order["files"]=[(io.BytesIO(png()),"one.png"),(io.BytesIO(png()),"two.png")]
+        rid=self.submit(order).json["id"]
+        self.assertEqual(self.client.delete("/api/projects/"+rid,json={"confirm":True},base_url=ORIGIN).status_code,401)
+        login=self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
+        h={"X-CSRF":login.json["csrf"]}
+        self.assertEqual(self.client.get("/api/client/session",base_url=ORIGIN).status_code,200)
+        p=self.client.get("/api/projects",base_url=ORIGIN).json["projects"][0]
+        fid=p["files"][0]["id"]
+        self.assertEqual(self.client.put("/api/files/"+fid,json={"public":True},headers=h,base_url=ORIGIN).status_code,403)
+        self.assertEqual(self.client.delete("/api/files/"+fid,json={"confirm":True},base_url=ORIGIN).status_code,403)
+        self.assertEqual(self.client.delete("/api/files/"+fid,json={"confirm":False},headers=h,base_url=ORIGIN).status_code,400)
+        self.assertEqual(self.client.delete("/api/files/"+fid,json={"confirm":True},headers=h,base_url=ORIGIN).status_code,200)
+        self.assertEqual(self.client.get("/api/files/"+fid,base_url=ORIGIN).status_code,404)
+        cid=self.client.get("/api/clients",base_url=ORIGIN).json["clients"][0]["id"]
+        self.assertEqual(self.client.delete("/api/clients/"+cid,json={"confirm":True},headers=h,base_url=ORIGIN).status_code,200)
+        self.assertEqual(self.client.get("/api/client/session",base_url=ORIGIN).status_code,401)
+        with db() as c:
+            for table in ("projects","files","client_requests","design_briefs","design_requests","clients"):
+                self.assertEqual(c.execute("SELECT COUNT(*) AS n FROM "+table).fetchone()["n"],0)
+        self.assertEqual(self.client.get("/api/projects",base_url=ORIGIN).status_code,200)
+
+    def test_v520_ignore_untrusted_forwarded_address(self):
+        from app import sender_address
+        from unittest.mock import patch
+        with patch.dict(os.environ, {"LERIKA_TRUSTED_CLIENT_IP_HEADER":"CF-Connecting-IP"}):
+            with app.test_request_context("/",headers={"CF-Connecting-IP":"192.0.2.9","X-Forwarded-For":"192.0.2.10"},environ_overrides={"REMOTE_ADDR":"8.8.8.8"}):
+                self.assertEqual(sender_address(),"8.8.8.8")
+
+    def test_v520_render_proxy_header_and_ip_normalization(self):
+        from app import sender_address
+        from unittest.mock import patch
+        with patch.dict(os.environ, {"RENDER":"true","LERIKA_TRUSTED_CLIENT_IP_HEADER":"CF-Connecting-IP"}):
+            cases=[
+                ("8.8.4.4","8.8.4.4"),
+                ("::ffff:8.8.4.4","8.8.4.4"),
+                ("2001:4860:1234:5678::1","2001:4860:1234:5678::/64"),
+                ("2001:4860:1234:5678::2","2001:4860:1234:5678::/64"),
+                ("8.8.8.8, 8.8.4.4","10.0.0.2"),
+                ("invalid","10.0.0.2"),
+                ("","10.0.0.2"),
+            ]
+            for value, expected in cases:
+                with self.subTest(value=value):
+                    with app.test_request_context("/",headers={"CF-Connecting-IP":value,"X-Forwarded-For":"1.1.1.1"},environ_overrides={"REMOTE_ADDR":"10.0.0.2"}):
+                        self.assertEqual(sender_address(),expected)
+
+    def test_v520_proxy_order_limit_ignores_spoofed_xff(self):
+        from unittest.mock import patch
+        with patch.dict(os.environ, {"RENDER":"true","LERIKA_TRUSTED_CLIENT_IP_HEADER":"CF-Connecting-IP"}):
+            for i in range(12):
+                h={**HEADERS,"CF-Connecting-IP":"8.8.8.8","X-Forwarded-For":"192.0.2."+str(i+1)}
+                self.assertEqual(self.submit(self.data(),headers=h,ip="10.0.0.2").status_code,201)
+            h={**HEADERS,"CF-Connecting-IP":"8.8.8.8","X-Forwarded-For":"192.0.2.99"}
+            self.assertEqual(self.submit(self.data(),headers=h,ip="10.0.0.2").status_code,429)
+            h["CF-Connecting-IP"]="8.8.4.4"
+            self.assertEqual(self.submit(self.data(),headers=h,ip="10.0.0.2").status_code,201)
+
+    def test_v520_logout_does_not_clear_other_role(self):
+        h={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        d={"name":"Test","email":"a@example.invalid","password":"long-test-password-123","consent":True}
+        self.assertEqual(self.client.post("/api/client/register",json=d,headers=h,base_url=ORIGIN).status_code,201)
+        login=self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
+        self.assertEqual(login.status_code,200)
+        self.assertEqual(self.client.post("/logout",headers={"X-CSRF":login.json["csrf"]},base_url=ORIGIN).status_code,200)
+        self.assertEqual(self.client.get("/session",base_url=ORIGIN).status_code,401)
+        self.assertEqual(self.client.get("/api/client/session",base_url=ORIGIN).status_code,200)
+        login=self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
+        self.assertEqual(login.status_code,200)
+        self.assertEqual(self.client.post("/api/client/logout",json={},headers=h,base_url=ORIGIN).status_code,200)
+        self.assertEqual(self.client.get("/api/client/session",base_url=ORIGIN).status_code,401)
+        self.assertEqual(self.client.get("/session",base_url=ORIGIN).status_code,200)
+
+    @unittest.skipUnless(QA_POSTGRES,"PostgreSQL-only connection check")
+    def test_v520_postgres_connections_close_on_success_and_exception(self):
+        with db() as c:
+            self.assertEqual(c.execute("SELECT 1 AS n").fetchone()["n"],1)
+        self.assertTrue(c.conn.closed)
+        with self.assertRaisesRegex(RuntimeError,"rollback probe"):
+            with db() as c:
+                c.execute("INSERT INTO client_limits VALUES(?,?,?)",("qa-rollback",1,1))
+                raise RuntimeError("rollback probe")
+        self.assertTrue(c.conn.closed)
+        with db() as check:
+            self.assertIsNone(check.execute("SELECT action FROM client_limits WHERE action=?",("qa-rollback",)).fetchone())
+
+    @unittest.skipIf(QA_POSTGRES,"SQLite-only connection check")
+    def test_v520_sqlite_connections_close_on_success_and_exception(self):
+        import sqlite3
+        with db() as c:
+            self.assertEqual(c.execute("SELECT 1").fetchone()[0],1)
+        with self.assertRaises(sqlite3.ProgrammingError):
+            c.execute("SELECT 1")
+        with self.assertRaisesRegex(RuntimeError,"rollback probe"):
+            with db() as c:
+                c.execute("INSERT INTO client_limits VALUES(?,?,?)",("qa-rollback",1,1))
+                raise RuntimeError("rollback probe")
+        with self.assertRaises(sqlite3.ProgrammingError):
+            c.execute("SELECT 1")
+        with db() as check:
+            self.assertIsNone(check.execute("SELECT action FROM client_limits WHERE action=?",("qa-rollback",)).fetchone())
+
     def test_showroom_local_revision_and_csp(self):
         r=self.client.get("/showroom/")
         self.assertEqual(r.status_code,200)
