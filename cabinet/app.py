@@ -6,10 +6,11 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from PIL import Image, ImageOps
 
 DATABASE_URL=os.environ.get("DATABASE_URL","")
-if os.environ.get("RENDER") and not DATABASE_URL:
-    raise RuntimeError("Render requires persistent PostgreSQL DATABASE_URL")
+SETUP_REQUIRED=bool(os.environ.get("RENDER")) and (not DATABASE_URL or not os.environ.get("SESSION_SECRET") or not (os.environ.get("ADMIN_PASSWORD") or os.environ.get("ADMIN_PASSWORD_HASH")))
+
+
 ROOT=Path(os.environ.get("DATA_DIR","/data"))
-if not DATABASE_URL:
+if not DATABASE_URL and not SETUP_REQUIRED:
     ROOT.mkdir(parents=True,exist_ok=True)
 DB=ROOT/"portfolio.sqlite3"
 KEY=os.environ.get("SESSION_SECRET","")
@@ -20,10 +21,10 @@ if os.environ.get("ADMIN_PASSWORD"):
     if len(os.environ["ADMIN_PASSWORD"])<14:
         raise RuntimeError("ADMIN_PASSWORD must contain at least 14 characters")
     PASSWORD=generate_password_hash(os.environ["ADMIN_PASSWORD"])
-if len(KEY)<32 or not PASSWORD.startswith(("scrypt:","pbkdf2:")):
+if not SETUP_REQUIRED and (len(KEY)<32 or not PASSWORD.startswith(("scrypt:","pbkdf2:"))):
     raise RuntimeError("Set SESSION_SECRET (32+ random characters) and ADMIN_PASSWORD_HASH")
 app=Flask(__name__)
-app.config.update(SECRET_KEY=KEY,SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SECURE=True,SESSION_COOKIE_SAMESITE="Strict",MAX_CONTENT_LENGTH=16*1024*1024)
+app.config.update(SECRET_KEY=KEY if not SETUP_REQUIRED else None,SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SECURE=True,SESSION_COOKIE_SAMESITE="Strict",MAX_CONTENT_LENGTH=16*1024*1024)
 CATEGORIES=["Кухни","Шкафы","Прихожие","Спальни","Детские","Гостиные","Гардеробные","Нестандартные системы хранения"]
 STAGES=["Исходное помещение","Замеры и эскизы","3D-проект","Изготовление","Монтаж","Готовая мебель"]
 ORIGIN="https://29018585-collab.github.io"
@@ -60,7 +61,8 @@ def lock(c,key):
     else:
         c.execute("BEGIN IMMEDIATE")
 
-with db() as c:
+if not SETUP_REQUIRED:
+  with db() as c:
     lock(c,82001)
     c.executescript("""
     CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY, category INTEGER NOT NULL CHECK(category BETWEEN 1 AND 8), title TEXT NOT NULL, description TEXT NOT NULL, stage INTEGER NOT NULL CHECK(stage BETWEEN 1 AND 6), status TEXT NOT NULL CHECK(status IN ('work','ready')), published INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL);
@@ -68,6 +70,15 @@ with db() as c:
     CREATE TABLE IF NOT EXISTS covers(category INTEGER PRIMARY KEY CHECK(category BETWEEN 1 AND 8), file TEXT NOT NULL REFERENCES files(id));
     CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY CHECK(id=1), count INTEGER NOT NULL, since INTEGER NOT NULL);
     """)
+
+
+@app.before_request
+def configuration_guard():
+    if not SETUP_REQUIRED:
+        return None
+    if request.path=="/" and request.method in ("GET","HEAD"):
+        return ('<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ЛериКа · Настройка</title><h1>ЛериКа — личный кабинет</h1><p>Кабинет ожидает завершения защищённой настройки администратором. Вход и загрузка файлов пока недоступны.</p></html>',503,{"Content-Type":"text/html; charset=utf-8"})
+    return jsonify(error="Service not configured"),503
 
 @app.after_request
 def headers(r):
