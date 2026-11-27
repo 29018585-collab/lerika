@@ -28,7 +28,7 @@ if not SETUP_REQUIRED and (len(KEY)<32 or not PASSWORD.startswith(("scrypt:","pb
     raise RuntimeError("Set SESSION_SECRET (32+ random characters) and ADMIN_PASSWORD_HASH")
 app=Flask(__name__)
 app.config.update(SECRET_KEY=KEY if not SETUP_REQUIRED else None,SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SECURE=True,SESSION_COOKIE_SAMESITE="Strict",MAX_CONTENT_LENGTH=16*1024*1024)
-REQUEST_SOURCES={"3d":"3D-конструктор","ai":"Дизайн-студия","config":"Конфигуратор","plan":"Планировщик помещения","engineering":"Инженерная лаборатория","order":"Прямой заказ","legacy":"Источник не указан"}
+REQUEST_SOURCES={"3d":"3D-конструктор","ai":"Дизайн-студия","config":"Конфигуратор","plan":"Планировщик помещения","engineering":"Инженерная лаборатория","order":"Прямой заказ","legacy":"Источник не указан","support":"Поддержка","partner":"Сотрудничество"}
 CATEGORIES=["Кухни","Шкафы","Прихожие","Спальни","Детские","Гостиные","Гардеробные","Нестандартные системы хранения"]
 STAGES=["Исходное помещение","Замеры и эскизы","3D-проект","Изготовление","Монтаж","Готовая мебель"]
 ORIGIN="https://29018585-collab.github.io"
@@ -267,7 +267,7 @@ def project_record(p):
 def design_request():
     order=request.path=="/api/order-requests"
     source=request.form.get("source","order" if order else "ai")
-    if source not in (("order","3d","config","plan","engineering") if order else ("ai",)):
+    if source not in (("order","3d","config","plan","engineering","support","partner") if order else ("ai",)):
         abort(400)
     if request.headers.get("Origin")!="https://lerika-cabinet.onrender.com" or request.headers.get("X-Lerika-Studio")!=("5.8" if order else "5.6"):
         abort(403)
