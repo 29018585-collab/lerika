@@ -24,7 +24,7 @@ class StudioTests(unittest.TestCase):
     def setUp(self):
         self.client=app.test_client()
         with db() as c:
-            for table in ("client_requests","clients","client_limits","price_catalog","covers","files","design_briefs","design_requests","projects","attempts"):
+            for table in ("client_requests","clients","client_limits","price_catalog","covers","files","design_briefs","request_numbers","design_requests","projects","attempts"):
                 c.execute("DELETE FROM "+table)
     def data(self,rid=None):
         return dict(request_id=rid or secrets.token_hex(16),consent="yes",title="Тест кухни",room="Кухня",contact="test@example.invalid",brief="Пожелания: тест")
@@ -105,7 +105,7 @@ class StudioTests(unittest.TestCase):
         for expected in (201,200):
             self.assertEqual(self.client.post("/api/order-requests",data=d,headers=headers,base_url=ORIGIN,content_type="multipart/form-data").status_code,expected)
     def test_request_sources_private_and_validated(self):
-        expected=["3d","config","plan","engineering","order","support","partner"]
+        expected=["3d","config","plan","engineering","order","support","partner","project"]
         for source in expected:
             d=self.data();d["source"]=source
             r=self.client.post("/api/order-requests",data=d,headers={"Origin":ORIGIN,"X-Lerika-Studio":"5.8"},base_url=ORIGIN,content_type="multipart/form-data")
@@ -416,10 +416,89 @@ class StudioTests(unittest.TestCase):
         with db() as check:
             self.assertIsNone(check.execute("SELECT action FROM client_limits WHERE action=?",("qa-rollback",)).fetchone())
 
+    def test_request_numbers_migration_retry_and_delete(self):
+        from app import migrate_request_numbers,lock
+        h={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        self.assertEqual(self.client.post("/api/client/register",json={"name":"Test","email":"number@example.invalid","password":"long-test-password-123","consent":True},headers=h,base_url=ORIGIN).status_code,201)
+        first=self.data()
+        a=self.submit(first);self.assertEqual(a.status_code,201)
+        b=self.submit(self.data());self.assertEqual(b.status_code,201)
+        self.assertRegex(a.json["number"],r"^L-[0-9]{6,}$")
+        self.assertEqual(int(b.json["number"][2:]),int(a.json["number"][2:])+1)
+        self.assertEqual(self.submit(first).json,a.json)
+        self.assertEqual({o["number"] for o in self.client.get("/api/client/session",base_url=ORIGIN).json["orders"]},{a.json["number"],b.json["number"]})
+        # Simulate one legacy request without a number and migrate twice.
+        with db() as c:
+            lock(c,82003)
+            c.execute("DELETE FROM request_numbers WHERE request_id=?",(b.json["id"],))
+            migrate_request_numbers(c)
+            row=c.execute("SELECT number FROM request_numbers WHERE request_id=?",(b.json["id"],)).fetchone()["number"]
+            migrate_request_numbers(c)
+            self.assertEqual(c.execute("SELECT number FROM request_numbers WHERE request_id=?",(b.json["id"],)).fetchone()["number"],row)
+        self.assertGreater(row,int(b.json["number"][2:]))
+        login=self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
+        self.assertEqual(login.status_code,200)
+        listing=self.client.get("/api/projects",base_url=ORIGIN).json["projects"]
+        self.assertEqual(next(p["request_number"] for p in listing if p["id"]==a.json["id"]),a.json["number"])
+        csrf=login.json["csrf"]
+        self.assertEqual(self.client.delete("/api/projects/"+a.json["id"],json={"confirm":True},headers={"X-CSRF":csrf},base_url=ORIGIN).status_code,200)
+        c=self.submit(self.data());self.assertEqual(c.status_code,201)
+        self.assertGreater(int(c.json["number"][2:]),row)
+
+    def test_configured_origin_and_public_cache(self):
+        from unittest.mock import patch
+        from app import checked_origin
+        domain="https://lerika-qa.example.invalid"
+        for bad in ("http://example.invalid","https://example.invalid/path","https://x.invalid@evil.invalid","https://x.invalid?x=1"):
+            with self.assertRaises(RuntimeError): checked_origin(bad)
+        with patch("app.PUBLIC_ORIGIN",domain),patch("app.ALLOWED_ORIGINS",{domain,ORIGIN}):
+            r=self.client.get("/showroom/",base_url=domain)
+            self.assertEqual(r.status_code,200)
+            self.assertTrue(('name="lerika-app-origin" content="'+domain+'"').encode() in r.data)
+            self.assertTrue(b'name="lerika-portfolio-api" content="/"' in r.data)
+            self.assertEqual(r.headers["Cache-Control"],"no-store")
+            self.assertEqual(self.client.post("/api/design-requests",data=self.data(),headers={"Origin":domain,"X-Lerika-Studio":"5.6"},base_url=domain,content_type="multipart/form-data").status_code,201)
+            self.assertEqual(self.client.post("/api/design-requests",data=self.data(),headers={"Origin":"https://evil.invalid","X-Lerika-Studio":"5.6"},base_url=domain,content_type="multipart/form-data").status_code,403)
+            self.assertEqual(self.client.post("/api/design-requests",data=self.data(),headers={"Origin":ORIGIN,"X-Lerika-Studio":"5.6"},base_url=domain,content_type="multipart/form-data").status_code,403)
+            self.assertEqual(self.client.post("/api/design-requests",data=self.data(),headers={"Origin":domain,"X-Lerika-Studio":"5.6"},base_url="https://evil.invalid",content_type="multipart/form-data").status_code,403)
+            r=self.client.get("/public/portfolio",headers={"Origin":domain},base_url=domain)
+            self.assertEqual(r.headers["Access-Control-Allow-Origin"],domain)
+            self.assertIn("Origin",r.headers["Vary"])
+            self.assertEqual(r.headers["Cache-Control"],"no-store")
+            r=self.client.get("/showroom/",base_url="https://evil.invalid")
+            self.assertFalse(b'content="https://evil.invalid"' in r.data)
+        from pathlib import Path
+        from app import SITE_ROOT
+        scenes=sorted(SITE_ROOT.glob("scene-*.webp"))
+        self.assertEqual(len(scenes),2)
+        for f in scenes:
+            r=self.client.get("/showroom/"+f.name)
+            self.assertEqual(r.status_code,200)
+            self.assertEqual(r.headers["Cache-Control"],"public, max-age=31536000, immutable")
+            self.assertEqual(r.data,f.read_bytes())
+        public=sorted(SITE_ROOT.glob("public-*.webp"))
+        self.assertEqual(len(public),14)
+        import hashlib
+        for f in public:
+            r=self.client.get("/showroom/"+f.name)
+            self.assertEqual(r.status_code,200)
+            self.assertEqual(r.headers["Cache-Control"],"public, max-age=31536000, immutable")
+            self.assertEqual(r.mimetype,"image/webp")
+            self.assertLessEqual(len(r.data),200000)
+            self.assertEqual(hashlib.sha256(r.data).hexdigest()[:16],f.stem.rsplit("-",1)[1])
+            with Image.open(io.BytesIO(r.data)) as im:
+                self.assertEqual(im.format,"WEBP")
+                if f.name.startswith("public-kitchen-"):self.assertEqual(im.size,(1080,1400))
+                if f.name.startswith("public-stairs-"):self.assertEqual(im.size,(1080,1020))
+            self.assertTrue(f.name in (SITE_ROOT/"index.html").read_text())
+        self.assertEqual(self.client.get("/showroom/public-unknown-0000000000000000.webp").headers["Cache-Control"],"no-store")
+        self.assertLess((SITE_ROOT/"index.html").stat().st_size,500000)
+        self.assertEqual(self.client.get("/api/projects").headers["Cache-Control"],"no-store")
+
     def test_showroom_local_revision_and_csp(self):
         r=self.client.get("/showroom/")
         self.assertEqual(r.status_code,200)
-        self.assertIn(b"LERIKA LAB V5.6",r.data)
+        self.assertTrue("ЛЕРИКА · V5.23".encode() in r.data,"local V5.23 revision not served")
         self.assertNotIn(b'id="lab-ai-generate"',r.data)
         self.assertIn("sha256-",r.headers["Content-Security-Policy"])
         self.assertIn(b'id="lab3-canvas"',r.data)

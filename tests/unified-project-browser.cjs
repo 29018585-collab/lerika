@@ -63,5 +63,12 @@ await p.evaluate(raw=>localStorage.setItem("lerika-project-v519",raw),JSON.strin
 await p.reload();assert.equal(await p.locator(".project-item").count(),original.items.length);
 assert.match(await p.locator("#project-save-status").textContent(),/Восстановлено/);
 assert.equal(await p.evaluate(()=>localStorage.getItem("lerika-project-v519-recovery")),JSON.stringify(damaged));
+const sourceCases=await p.evaluate(()=>{const s=LerikaProject.intakeSource;return [s([{source:"config"}],null),s([{source:"3d"},{source:"3d"}],null),s([{source:"3d"},{source:"config"}],null),s([{source:"unknown"}],null),s([{source:"config"}],{})]});assert.deepEqual(sourceCases,["config","3d","project","project","plan"]);
+assert.equal(await p.locator('#lo-source option[value="project"]').count(),1);
+await p.evaluate(()=>LerikaProject.open("basket"));await p.locator("#estimate-panel").waitFor({state:"visible"});await p.locator("#estimate-order").click();await p.locator("#lo-panel").waitFor({state:"visible"});assert.equal(await p.locator("#lo-source").inputValue(),"project","mixed collection reaches actual order form with accurate source");
+assert.ok((await p.locator(".learning-lesson").allTextContents()).join(" ").includes("Сохранить и рассчитать смету"));
+assert.doesNotMatch((await p.locator(".learning-lesson").allTextContents()).join(" "),/К итоговому расчёту|введите их в соответствующие поля|Отправьте заявку с планом/);
+assert.equal(await p.getByText("AI Lab · дизайн-студия",{exact:true}).count(),0);
+console.log("PASS V5.23 BUG-017/018/029 guide, studio label and estimate source variants");
 assert.deepEqual(errors,[]);console.log("PASS V5.19 saved geometry, no duplicate, shared room, exact published rates, missing/error rates, four order files, separate cut, 4 camera angles and VK");
 }finally{await b.close();server.close()}})().catch(e=>{console.error(e);server.close();process.exitCode=1});

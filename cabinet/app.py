@@ -1,7 +1,7 @@
 import os, sqlite3, secrets, time, io, json, re, hashlib, base64, mimetypes, csv, zipfile, hmac, ipaddress
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.request import urlopen, Request
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from threading import Lock
 from pathlib import Path
 from functools import wraps
@@ -30,10 +30,28 @@ if not SETUP_REQUIRED and (len(KEY)<32 or not PASSWORD.startswith(("scrypt:","pb
     raise RuntimeError("Set SESSION_SECRET (32+ random characters) and ADMIN_PASSWORD_HASH")
 app=Flask(__name__)
 app.config.update(SECRET_KEY=KEY if not SETUP_REQUIRED else None,SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SECURE=True,SESSION_COOKIE_SAMESITE="Strict",MAX_CONTENT_LENGTH=16*1024*1024)
-REQUEST_SOURCES={"3d":"3D-конструктор","ai":"Дизайн-студия","config":"Конфигуратор","plan":"Планировщик помещения","engineering":"Инженерная лаборатория","order":"Прямой заказ","legacy":"Источник не указан","support":"Поддержка","partner":"Сотрудничество"}
+REQUEST_SOURCES={"project":"Коллекция изделий","3d":"3D-конструктор","ai":"Дизайн-студия","config":"Конфигуратор","plan":"Планировщик помещения","engineering":"Инженерная лаборатория","order":"Прямой заказ","legacy":"Источник не указан","support":"Поддержка","partner":"Сотрудничество"}
 CATEGORIES=["Кухни","Шкафы","Прихожие","Спальни","Детские","Гостиные","Гардеробные","Нестандартные системы хранения"]
 STAGES=["Исходное помещение","Замеры и эскизы","3D-проект","Изготовление","Монтаж","Готовая мебель"]
 ORIGIN="https://29018585-collab.github.io"
+DEFAULT_PUBLIC_ORIGIN="https://lerika-cabinet.onrender.com"
+def checked_origin(value):
+    value=value.strip().rstrip("/")
+    if not re.fullmatch(r"https://[a-zA-Z0-9.-]+(?::[0-9]{1,5})?",value):
+        raise RuntimeError("PUBLIC_ORIGIN/ALLOWED_ORIGINS must contain HTTPS origins only")
+    u=urlsplit(value)
+    if not u.hostname or u.port is not None and not 1<=u.port<=65535:
+        raise RuntimeError("Invalid public origin")
+    return "https://"+u.netloc.lower()
+PUBLIC_ORIGIN=checked_origin(os.environ.get("PUBLIC_ORIGIN",DEFAULT_PUBLIC_ORIGIN))
+ALLOWED_ORIGINS={PUBLIC_ORIGIN,DEFAULT_PUBLIC_ORIGIN}|{checked_origin(v) for v in os.environ.get("ALLOWED_ORIGINS","").split(",") if v.strip()}
+def current_public_origin():
+    # Match configured origins only, never reflect an arbitrary Host header.
+    return next((v for v in sorted(ALLOWED_ORIGINS) if urlsplit(v).netloc==request.host.lower()),PUBLIC_ORIGIN)
+def valid_public_origin():
+    origin=request.headers.get("Origin")
+    return origin in ALLOWED_ORIGINS and urlsplit(origin).netloc==request.host.lower()
+
 Image.MAX_IMAGE_PIXELS=25000000
 
 class PostgresDB:
@@ -74,6 +92,23 @@ def lock(c,key):
     else:
         c.execute("BEGIN IMMEDIATE")
 
+def request_number(n):
+    return "L-"+str(n).zfill(6)
+def existing_number(c,rid):
+    row=c.execute("SELECT number FROM request_numbers WHERE request_id=?",(rid,)).fetchone()
+    return request_number(row["number"]) if row else None
+def allocate_number(c,rid):
+    # Call only while holding intake/migration lock 82003. Counter never decreases.
+    old=existing_number(c,rid)
+    if old: return old
+    c.execute("UPDATE request_sequence SET last_number=last_number+1 WHERE id=1")
+    n=c.execute("SELECT last_number FROM request_sequence WHERE id=1").fetchone()["last_number"]
+    c.execute("INSERT INTO request_numbers(number,request_id) VALUES(?,?)",(n,rid))
+    return request_number(n)
+def migrate_request_numbers(c):
+    for row in c.execute("SELECT d.id FROM design_requests d LEFT JOIN request_numbers n ON n.request_id=d.id WHERE n.request_id IS NULL ORDER BY d.created,d.id").fetchall():
+        allocate_number(c,row["id"])
+
 if not SETUP_REQUIRED:
   with db() as c:
     lock(c,82001)
@@ -83,6 +118,8 @@ if not SETUP_REQUIRED:
     CREATE TABLE IF NOT EXISTS covers(category INTEGER PRIMARY KEY CHECK(category BETWEEN 1 AND 8), file TEXT NOT NULL REFERENCES files(id));
     CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY CHECK(id=1), count INTEGER NOT NULL, since INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS design_requests(id TEXT PRIMARY KEY, created INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS request_numbers(number INTEGER PRIMARY KEY, request_id TEXT NOT NULL UNIQUE REFERENCES design_requests(id));
+    CREATE TABLE IF NOT EXISTS request_sequence(id INTEGER PRIMARY KEY CHECK(id=1), last_number INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS design_briefs(project TEXT PRIMARY KEY REFERENCES projects(id), brief TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS clients(id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, password_hash TEXT NOT NULL, created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS client_requests(project TEXT PRIMARY KEY REFERENCES projects(id), client TEXT NOT NULL REFERENCES clients(id));
@@ -92,6 +129,8 @@ if not SETUP_REQUIRED:
     # Migrate only the initial V5.6 intake records, if any. Preserve the client
     # brief privately and remove it from the public-facing project metadata.
     lock(c,82003)
+    c.execute("INSERT INTO request_sequence VALUES(1,0) ON CONFLICT(id) DO NOTHING")
+    migrate_request_numbers(c)
     legacy=list(c.execute("SELECT p.id,p.title,p.description FROM projects p JOIN design_requests r ON r.id=p.id LEFT JOIN design_briefs b ON b.project=p.id WHERE b.project IS NULL AND p.description LIKE ?",("Заявка из дизайн-студии Lab V5.6\\nКонтакт:%".replace("\\n","\n"),)))
     for p in legacy:
         c.execute("INSERT INTO design_briefs VALUES(?,?)",(p["id"],"Название: "+p["title"]+"\n"+p["description"]))
@@ -111,15 +150,25 @@ def configuration_guard():
         return ('<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ЛериКа · Настройка</title><h1>ЛериКа — личный кабинет</h1><p>Кабинет ожидает завершения защищённой настройки администратором. Вход и загрузка файлов пока недоступны.</p></html>',503,{"Content-Type":"text/html; charset=utf-8"})
     return jsonify(error="Service not configured"),503
 
+def immutable_asset(name):
+    return bool(re.fullmatch(r"(?:scene-(?:lit|unlit)|public-[a-z0-9-]+)-[a-f0-9]{16}\.webp",name))
+
 @app.after_request
 def headers(r):
     r.headers["X-Content-Type-Options"]="nosniff"
     r.headers["Referrer-Policy"]="no-referrer"
     r.headers["X-Frame-Options"]="DENY"
     r.headers.setdefault("Content-Security-Policy","default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; manifest-src 'self'; worker-src 'self'")
-    r.headers["Cache-Control"]="no-store"
+    if not (request.path.startswith("/showroom/") and immutable_asset(request.path.removeprefix("/showroom/")) and r.status_code in (200,304)):
+        r.headers["Cache-Control"]="no-store"
     if request.path.startswith("/public/"):
-        r.headers["Access-Control-Allow-Origin"]=ORIGIN
+        origin=request.headers.get("Origin")
+        if origin in ALLOWED_ORIGINS or origin==ORIGIN:
+            r.headers["Access-Control-Allow-Origin"]=origin
+            r.vary.add("Origin")
+        else:
+            r.headers["Access-Control-Allow-Origin"]=ORIGIN
+            r.vary.add("Origin")
     return r
 
 def admin(f):
@@ -163,6 +212,10 @@ def site_asset(name, limit):
         abort(404)
     if name.startswith(".") or ".." in name:
         abort(404)
+    if name=="portfolio-api.js" or immutable_asset(name):
+        local=SITE_ROOT/name
+        if not local.is_file() or local.stat().st_size>limit: abort(404)
+        return local.read_bytes()
     with _site_lock:
         cached=_site_cache.get(name)
         if cached and time.monotonic()-cached[0]<60:
@@ -190,11 +243,13 @@ def showroom():
     # Keep the deployed studio UI and its submission API in the same revision.
     local=SITE_ROOT/"index.html"
     raw=local.read_bytes() if local.is_file() and local.stat().st_size<=4*1024*1024 else b""
-    html=(raw if b"LERIKA LAB V5.6" in raw else site_asset("index.html",4*1024*1024)).decode("utf-8")
+    html=(raw if b'id="lab-ai-panel"' in raw and b'id="estimate-panel"' in raw else site_asset("index.html",4*1024*1024)).decode("utf-8")
     html=html.replace('href="https://lerika-cabinet.onrender.com"','href="/cabinet/"')
     html=html.replace('href="https://lerika-cabinet.onrender.com/"','href="/cabinet/"')
     html=html.replace('href="https://lerika-cabinet.onrender.com/cabinet/"','href="/cabinet/"')
-    html=re.sub(r'(<meta name="lerika-portfolio-api" content=")[^"]*(")',lambda m:m[1]+"https://lerika-cabinet.onrender.com"+m[2],html,count=1)
+    origin=current_public_origin()
+    html=html.replace(DEFAULT_PUBLIC_ORIGIN,origin)
+    html=re.sub(r'(<meta name="lerika-portfolio-api" content=")[^"]*(")',lambda m:m[1]+"/"+m[2],html,count=1)
     html=html.replace("</head>",'<link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/app-icon/192.png"><script defer src="/static/install.js"></script></head>',1)
     # Exact CSP hashes permit only the inline CSS/JS in this trusted public page.
     def hashes(tag):
@@ -210,7 +265,10 @@ def showroom_asset(name):
     mime=mimetypes.guess_type(name)[0] or "application/octet-stream"
     # SVG is not a trusted inline document: no SVG uploads are exposed here.
     if name.lower().endswith(".svg"): abort(404)
-    return send_file(io.BytesIO(raw),mimetype=mime)
+    response=send_file(io.BytesIO(raw),mimetype=mime)
+    if immutable_asset(name):
+        response.headers["Cache-Control"]="public, max-age=31536000, immutable"
+    return response
 
 @app.get("/manifest.webmanifest")
 def manifest():
@@ -268,7 +326,7 @@ def logout():
 
 
 def client_origin():
-    if request.headers.get("Origin")!="https://lerika-cabinet.onrender.com" or request.headers.get("X-Lerika-Client")!="1":
+    if not valid_public_origin() or request.headers.get("X-Lerika-Client")!="1":
         abort(403)
 
 def sender_address():
@@ -367,7 +425,9 @@ def client_session():
     with db() as c:
         row=c.execute("SELECT name,email FROM clients WHERE id=?",(cid,)).fetchone()
         if not row: abort(401)
-        orders=[dict(x) for x in c.execute("SELECT p.id,p.title,p.stage,p.status,r.created FROM client_requests cr JOIN projects p ON p.id=cr.project JOIN design_requests r ON r.id=p.id WHERE cr.client=? ORDER BY r.created DESC",(cid,))]
+        orders=[dict(x) for x in c.execute("SELECT p.id,p.title,p.stage,p.status,r.created,n.number FROM client_requests cr JOIN projects p ON p.id=cr.project JOIN design_requests r ON r.id=p.id LEFT JOIN request_numbers n ON n.request_id=r.id WHERE cr.client=? ORDER BY r.created DESC",(cid,))]
+    for order in orders:
+        order["number"]=request_number(order["number"]) if order["number"] is not None else order["id"][:12]
     return jsonify(name=row["name"],email=row["email"],orders=orders)
 
 @app.get("/api/clients")
@@ -494,9 +554,9 @@ def project_record(p):
 def design_request():
     order=request.path=="/api/order-requests"
     source=request.form.get("source","order" if order else "ai")
-    if source not in (("order","3d","config","plan","engineering","support","partner") if order else ("ai",)):
+    if source not in (("order","project","3d","config","plan","engineering","support","partner") if order else ("ai",)):
         abort(400)
-    if request.headers.get("Origin")!="https://lerika-cabinet.onrender.com" or request.headers.get("X-Lerika-Studio")!=("5.8" if order else "5.6"):
+    if not valid_public_origin() or request.headers.get("X-Lerika-Studio")!=("5.8" if order else "5.6"):
         abort(403)
     if request.mimetype!="multipart/form-data":
         abort(415)
@@ -511,7 +571,7 @@ def design_request():
     # A random request ID makes network retries idempotent.
     with db() as c:
         if c.execute("SELECT id FROM design_requests WHERE id=?",(rid,)).fetchone():
-            return jsonify(id=rid),200
+            return jsonify(id=rid,number=existing_number(c,rid)),200
     reserve_limits([(limit_key("intake-hour"),12,3600),(limit_key("intake-day"),40,86400)])
     files=request.files.getlist("files")
     collages=request.files.getlist("collage")
@@ -570,7 +630,7 @@ def design_request():
     with db() as c:
         lock(c,82003)
         if c.execute("SELECT id FROM design_requests WHERE id=?",(rid,)).fetchone():
-            return jsonify(id=rid),200
+            return jsonify(id=rid,number=existing_number(c,rid)),200
         # Sender limits were reserved before attachment processing; retain the storage cap.
         used=c.execute("SELECT COALESCE(SUM(length(data)),0) AS bytes_used FROM files").fetchone()["bytes_used"]
         if used+sum(len(v[3]) for v in attachments)>350*1024*1024: abort(413)
@@ -580,10 +640,12 @@ def design_request():
             # Attachments (including the collage) are private by default.
             c.execute("INSERT INTO files VALUES(?,?,?,?,?,?,0,?)",(secrets.token_hex(16),rid,1,name,mime,image,raw))
         c.execute("INSERT INTO design_requests VALUES(?,?)",(rid,now))
+        number=allocate_number(c,rid)
+        c.execute("UPDATE projects SET title=? WHERE id=?",(("Заказ" if order else "Заявка")+" · "+room+" · "+number,rid))
         cid=client_id()
         if cid and c.execute("SELECT id FROM clients WHERE id=?",(cid,)).fetchone():
             c.execute("INSERT INTO client_requests VALUES(?,?)",(rid,cid))
-    return jsonify(id=rid),201
+    return jsonify(id=rid,number=number),201
 
 @app.get("/api/projects")
 @admin
@@ -601,6 +663,7 @@ def projects():
                     matched="ai" if private and "ЛЕРИКА LAB V5.6 / Задание дизайнеру" in private["brief"] else "legacy"
                 p["request_source"]=matched
                 p["request_created"]=intake["created"]
+                p["request_number"]=existing_number(c,p["id"]) or p["id"][:12]
             p["files"]=[dict(f) for f in c.execute("SELECT id,stage,name,mime,image,public FROM files WHERE project=? ORDER BY stage,id",(p["id"],))]
         covers=[dict(x) for x in c.execute("SELECT * FROM covers")]
     return jsonify(projects=rows,covers=covers,categories=CATEGORIES,stages=STAGES)
@@ -693,6 +756,7 @@ def delete_project_rows(c,p):
     c.execute("DELETE FROM files WHERE project=?",(p,))
     c.execute("DELETE FROM client_requests WHERE project=?",(p,))
     c.execute("DELETE FROM design_briefs WHERE project=?",(p,))
+    c.execute("DELETE FROM request_numbers WHERE request_id=?",(p,))
     c.execute("DELETE FROM design_requests WHERE id=?",(p,))
     c.execute("DELETE FROM projects WHERE id=?",(p,))
 

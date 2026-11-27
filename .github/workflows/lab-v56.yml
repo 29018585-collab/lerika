@@ -2,7 +2,7 @@ name: Lab V5.6 isolated regression
 on:
   pull_request:
     branches: [lerika-cabinet-v1, lerika-v521-calculations]
-    paths: ['index.html', 'cabinet/**', 'tests/**', '.github/workflows/lab-v56.yml']
+    paths: ['index.html', 'portfolio-api.js', 'scene-*.webp', 'public-*.webp', 'cabinet/**', 'tests/**', '.github/workflows/lab-v56.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -47,6 +47,8 @@ jobs:
                   assert len(b)==len(baseline) and [i for i,(x,y) in enumerate(zip(baseline,b)) if x!=y and i not in (3,5,7,11,14,17)]==[], 'Unexpected V5.22 script change'
               elif os.environ.get('GITHUB_HEAD_REF')=='lerika-v521-calculations':
                   assert [i for i,(x,y) in enumerate(zip(a,b)) if x!=y and i not in (3,5,7,12,17)]==[], 'Unexpected V5.21 script change'
+              elif os.environ.get('GITHUB_HEAD_REF')=='lerika-v523-interface':
+                  assert [i for i,(x,y) in enumerate(zip(a,b)) if x!=y and i not in (6,8,13,14,16,17)]==[], 'Unexpected V5.23 script change'
               else:
                   assert all(a[i]==b[i] for i in [2,3,4,8,9,12,13,16] if i<len(a)), 'Shared engine changed'
               if a[10]!=b[10]:
@@ -80,6 +82,9 @@ jobs:
       - name: Independent 3D depth and ownership regression
         if: ${{ hashFiles('tests/depth-browser.cjs') != '' }}
         run: node tests/depth-browser.cjs
+      - name: V5.23 public assets and administrator number search
+        if: ${{ hashFiles('tests/request-number-browser.cjs') != '' }}
+        run: node tests/request-number-browser.cjs
       - name: Engineering mobile browser tests
         if: ${{ hashFiles('tests/engineering-browser.cjs') != '' }}
         run: node tests/engineering-browser.cjs
@@ -122,3 +127,19 @@ jobs:
         working-directory: cabinet
         env:
           LERIKA_QA_POSTGRES: '1'
+
+  public-assets:
+    if: github.head_ref == 'lerika-v523-interface'
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    strategy:
+      matrix:
+        group: [gallery, portfolio, labs]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install Pillow==11.3.0
+      - name: Verify reproducible reviewed public images
+        run: python tests/prepare-public-assets.py --group ${{ matrix.group }} --check
