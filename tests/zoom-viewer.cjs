@@ -22,6 +22,22 @@ await cdp.send("Input.dispatchTouchEvent",{type:"touchMove",touchPoints:[{x:x-65
 await cdp.send("Input.dispatchTouchEvent",{type:"touchEnd",touchPoints:[]});
 assert.ok(parseInt((await p.locator("#lz-foot").textContent()).match(/\d+%/)[0])>150,"pinch must zoom");
 await p.locator("#lz-close").click();await p.locator("#lz-dialog").waitFor({state:"hidden"});
+// Live exploded assembly: visual offsets do not affect engineering quantities.
+const partsBefore=await p.locator("#le-parts").textContent();
+const target=await p.locator("#le-view").evaluate(cv=>{for(let y=110;y<cv.height-100;y+=8)for(let x=65;x<cv.width-65;x+=8){const id=cv.liveEdit.pick(x,y);if(id!==null&&cv.liveEdit.pick(x+4,y+4)===id&&cv.liveEdit.pick(x-4,y-4)===id)return {x,y,id,w:cv.width,h:cv.height}}throw Error("No visible exploded part")});
+await p.locator("#le-component").selectOption(String(target.id));
+const assembled=await p.locator("#le-view").evaluate(c=>c.toDataURL());
+await p.locator("#lz-open-le-view").click();await p.locator("#lz-reset").click();await p.locator("#lz-edit-action").waitFor({state:"visible"});
+const stageBox=await p.locator("#lz-stage").boundingBox(),scale=Math.min(stageBox.width/target.w,stageBox.height/target.h),px=stageBox.x+(stageBox.width-target.w*scale)/2+target.x*scale,py=stageBox.y+(stageBox.height-target.h*scale)/2+target.y*scale;
+await cdp.send("Input.dispatchTouchEvent",{type:"touchStart",touchPoints:[{x:px,y:py,id:1}]});
+await cdp.send("Input.dispatchTouchEvent",{type:"touchMove",touchPoints:[{x:px+30,y:py+15,id:1}]});
+await cdp.send("Input.dispatchTouchEvent",{type:"touchEnd",touchPoints:[]});
+assert.notEqual(await p.locator("#le-view").evaluate(c=>c.toDataURL()),assembled,"live assembly visual must move");
+assert.equal(await p.locator("#le-parts").textContent(),partsBefore,"engineering quantities must be unchanged");
+await p.locator("#lz-edit-action").click();
+assert.equal(await p.locator("#le-view").evaluate(c=>c.toDataURL()),assembled,"reset restores initial exploded arrangement");
+await p.locator("#lz-close").click();
+console.log("PASS live exploded component touch, reset, immutable quantities");
 await p.locator("#lz-open-le-cut-view").click();await p.locator("#lz-dialog").waitFor({state:"visible"});await p.keyboard.press("Escape");await p.locator("#lz-dialog").waitFor({state:"hidden"});
 await p.evaluate(()=>location.hash="#design-lab/plan");await p.locator("#lab-plan-panel").waitFor({state:"visible"});await p.locator("#lp-view").click();assert.equal(await p.locator("#lz-dialog").isVisible(),false);await p.locator("#lz-open-lp-view").click();await p.locator("#lz-dialog").waitFor({state:"visible"});await p.locator("#lz-close").click();
 assert.deepEqual(errors,[]);console.log("PASS zoom buttons, focus, double tap, wheel, pinch, pan, close, planner edit safety");
