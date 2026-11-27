@@ -28,8 +28,10 @@ jobs:
           old=subprocess.check_output(['git','show','origin/lerika-cabinet-v1:index.html'],text=True)
           def scripts(s):return re.findall(r'<script\b[^>]*>([\s\S]*?)</script>',s,re.I)
           a,b=scripts(old),scripts(new)
-          assert len(b) in (len(a),len(a)+2,len(a)+3)
-          if len(b)==len(a)+3:
+          assert len(b) in (len(a),len(a)+1,len(a)+2,len(a)+3)
+          if len(b)==len(a)+1:
+              assert [i for i,(x,y) in enumerate(zip(a,b)) if x!=y]==[14], 'Unexpected original script change'
+          elif len(b)==len(a)+3:
               assert [i for i,(x,y) in enumerate(zip(a,b)) if x!=y]==[1,6,7,11], 'Unexpected original script change'
               assert b[1].replace('3d|ai|config|plan|engineering|order','3d|ai|config|plan')==a[1]
               old_studio=b[6].replace('3d|ai|config|plan|engineering|order','3d|ai|config|plan').replace(',"engineering":"05 / Инженерная лаборатория","order":"Отправить заказ"','').replace(';document.getElementById("le-panel").hidden=key!=="engineering";document.getElementById("lo-panel").hidden=key!=="order"','')
@@ -67,3 +69,7 @@ jobs:
       - name: Responsive layout regression
         if: ${{ hashFiles('tests/mobile-layout.cjs') != '' }}
         run: node tests/mobile-layout.cjs
+
+      - name: Drawing zoom browser regression
+        if: ${{ hashFiles('tests/zoom-viewer.cjs') != '' }}
+        run: node tests/zoom-viewer.cjs
