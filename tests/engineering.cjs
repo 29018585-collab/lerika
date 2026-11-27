@@ -52,4 +52,10 @@ test("BUG-014 DXF exports only parts and separates visible/hidden/dimensions",()
  }
  const seg=Q.contourSegments([{x:0,y:0,w:100,h:100,depth:10},{x:20,y:20,w:60,h:60,depth:0}]);a.equal(seg.filter(s=>s.visible).length,4);a.equal(seg.filter(s=>!s.visible).length,4);
 });
+test("BUG-023 kitchen legs do not intersect plinth",()=>{
+const p=E.presets.kitchen,m=Q.build({type:"kitchen",w:p[1],h:p[2],d:p[3],n:p[4],t:16,ft:16,construction:{foot:100}});
+const plinth=m.boxes.find(b=>b.partIndex&&b.y===0&&b.b===100&&b.c===16);a.ok(plinth);
+const feet=m.boxes.filter(b=>!b.partIndex&&b.y===0&&b.b===100);a.equal(feet.length,4);
+for(const b of feet)a.ok(b.z+b.c<=plinth.z||b.z>=plinth.z+plinth.c);
+});
 console.log(n+" engineering core tests PASS");

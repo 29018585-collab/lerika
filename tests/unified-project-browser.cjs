@@ -56,5 +56,12 @@ await p.evaluate(()=>location.hash="#design-lab/config");await p.locator("#lab-c
 await p.evaluate(()=>location.hash="#design-lab/cut");await p.locator("#le-cut-card").waitFor({state:"visible"});assert.equal(await p.locator("#le-drawing-card").isVisible(),false);await p.locator("#le-cut").click();assert.ok(await p.locator("#le-sheet option").count()>0);await p.locator("#le-drawing-link").click();await p.locator("#le-drawing-card").waitFor({state:"visible"});assert.equal(await p.locator("#le-cut-card").isVisible(),false);
 await p.evaluate(()=>location.hash="#contact");const vk=p.getByRole("link",{name:/Написать в VK/});await vk.waitFor({state:"visible"});assert.equal(await vk.getAttribute("href"),"https://vk.ru/lerikamebel");
 const raster=await p.evaluate(()=>{const P=LerikaRoomPlanner,s=P.demo(),r=P.inspect(s.r,s.items,s.openings),cv=document.createElement("canvas");cv.width=500;cv.height=370;const ctx=cv.getContext("2d");return [0,1,2,3].map(i=>{const angle=.56+i*Math.PI/2,boxes=[...P.roomBoxes(s.r,s.openings,angle),...r.models.flatMap(m=>m.boxes.map(b=>({...b,pickId:m.item.id})))];ctx.fillStyle="#ece0cc";ctx.fillRect(0,0,cv.width,cv.height);const pick=LerikaRoomRaster(ctx,cv,boxes,{yaw:angle,pitch:.43,zoom:1.04},null),counts={1:0,2:0,3:0};for(let y=0;y<cv.height;y++)for(let x=0;x<cv.width;x++){const id=pick.hit(x,y);if(id)counts[id]++}return counts})});assert.ok(raster.every(v=>Object.values(v).every(n=>n>100)),JSON.stringify(raster));
+// V5.22 recovery: one malformed item must not erase the valid collection.
+const savedRaw=await p.evaluate(()=>localStorage.getItem("lerika-project-v519"));
+const original=JSON.parse(savedRaw);const damaged={...original,items:[...original.items,{...original.items[0],projectId:"corrupt",w:1}]};
+await p.evaluate(raw=>localStorage.setItem("lerika-project-v519",raw),JSON.stringify(damaged));
+await p.reload();assert.equal(await p.locator(".project-item").count(),original.items.length);
+assert.match(await p.locator("#project-save-status").textContent(),/Восстановлено/);
+assert.equal(await p.evaluate(()=>localStorage.getItem("lerika-project-v519-recovery")),JSON.stringify(damaged));
 assert.deepEqual(errors,[]);console.log("PASS V5.19 saved geometry, no duplicate, shared room, exact published rates, missing/error rates, four order files, separate cut, 4 camera angles and VK");
 }finally{await b.close();server.close()}})().catch(e=>{console.error(e);server.close();process.exitCode=1});
