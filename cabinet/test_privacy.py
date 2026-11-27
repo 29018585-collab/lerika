@@ -53,4 +53,29 @@ class PrivacyTests(unittest.TestCase):
     def test_complete_requires_final_stage(self):
         self.p["status"]="ready"
         self.assertEqual(self.c.put("/api/projects/"+self.id,json=self.p,headers=self.headers,base_url=self.base).status_code,400)
+
+    def test_pwa_public_assets_and_private_cache_policy(self):
+        anon=app.test_client()
+        manifest=anon.get("/manifest.webmanifest")
+        self.assertEqual(manifest.status_code,200)
+        self.assertEqual(manifest.json["display"],"standalone")
+        self.assertEqual(manifest.json["start_url"],"/")
+        self.assertEqual(manifest.json["scope"],"/")
+        for icon in manifest.json["icons"]:
+            r=anon.get(icon["src"])
+            self.assertEqual(r.status_code,200)
+            self.assertEqual(r.mimetype,"image/png")
+            side=int(icon["sizes"].split("x")[0])
+            self.assertEqual(Image.open(io.BytesIO(r.data)).size,(side,side))
+        sw=anon.get("/sw.js")
+        self.assertEqual(sw.status_code,200)
+        self.assertIn(b"Never cache authenticated",sw.data)
+        self.assertNotIn(b"caches.open",sw.data)
+        root=anon.get("/")
+        self.assertIn(b'rel="manifest"',root.data)
+        self.assertIn(b"installApp",root.data)
+        self.assertIn("worker-src 'self'",root.headers["Content-Security-Policy"])
+        self.assertEqual(root.headers["Cache-Control"],"no-store")
+        self.assertEqual(anon.get("/api/projects").status_code,401)
+
 if __name__=="__main__": unittest.main()
