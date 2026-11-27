@@ -105,7 +105,7 @@ class StudioTests(unittest.TestCase):
         for expected in (201,200):
             self.assertEqual(self.client.post("/api/order-requests",data=d,headers=headers,base_url=ORIGIN,content_type="multipart/form-data").status_code,expected)
     def test_request_sources_private_and_validated(self):
-        expected=["3d","config","plan","engineering","order","support","partner"]
+        expected=["3d","config","plan","engineering","order","support","partner","project"]
         for source in expected:
             d=self.data();d["source"]=source
             r=self.client.post("/api/order-requests",data=d,headers={"Origin":ORIGIN,"X-Lerika-Studio":"5.8"},base_url=ORIGIN,content_type="multipart/form-data")
