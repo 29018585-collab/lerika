@@ -419,7 +419,7 @@ class StudioTests(unittest.TestCase):
     def test_showroom_local_revision_and_csp(self):
         r=self.client.get("/showroom/")
         self.assertEqual(r.status_code,200)
-        self.assertIn(b"LERIKA LAB V5.6",r.data)
+        self.assertTrue("ЛЕРИКА · V5.23".encode() in r.data,"local V5.23 revision not served")
         self.assertNotIn(b'id="lab-ai-generate"',r.data)
         self.assertIn("sha256-",r.headers["Content-Security-Policy"])
         self.assertIn(b'id="lab3-canvas"',r.data)
