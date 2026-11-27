@@ -264,12 +264,15 @@ def design_request():
     brief=request.form.get("brief","").strip()
     room=request.form.get("room","")
     categories={"Кухня":1,"Прихожая":3,"Спальня":4,"Гостиная":6,"Детская":5,"Гардеробная":7,"Другое":8}
-    if not (re.fullmatch(r"[a-f0-9]{32}",rid) and 1<=len(title)<=100 and 1<=len(contact)<=150 and 1<=len(brief)<=4500 and room in categories):
+    if not (request.form.get("consent")=="yes" and re.fullmatch(r"[a-f0-9]{32}",rid) and 1<=len(title)<=100 and 1<=len(contact)<=150 and 1<=len(brief)<=4500 and room in categories):
         abort(400)
     # A random request ID makes network retries idempotent.
     with db() as c:
         if c.execute("SELECT id FROM design_requests WHERE id=?",(rid,)).fetchone():
             return jsonify(id=rid),200
+    now=int(time.time())
+    with db() as c:
+        if c.execute("SELECT COUNT(*) AS n FROM design_requests WHERE created>?",(now-3600,)).fetchone()["n"]>=12 or c.execute("SELECT COUNT(*) AS n FROM design_requests WHERE created>?",(now-86400,)).fetchone()["n"]>=40: abort(429)
     files=request.files.getlist("files")
     collages=request.files.getlist("collage")
     if len(files)>6 or len(collages)>1 or any(k not in ("files","collage") for k in request.files):
@@ -436,6 +439,6 @@ def public_portfolio():
 @app.get("/public/photos/<fid>")
 def public_photo(fid):
     with db() as c:
-        f=c.execute("SELECT f.data FROM files f JOIN projects p ON p.id=f.project WHERE f.id=? AND f.image=1 AND f.public=1 AND p.published=1",(fid,)).fetchone()
+        f=c.execute("SELECT f.data,f.mime FROM files f JOIN projects p ON p.id=f.project WHERE f.id=? AND f.image=1 AND f.public=1 AND p.published=1",(fid,)).fetchone()
     if not f: abort(404)
-    return send_file(io.BytesIO(f["data"]),mimetype="image/jpeg")
+    return send_file(io.BytesIO(f["data"]),mimetype=f["mime"])
