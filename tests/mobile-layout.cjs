@@ -43,7 +43,7 @@ assert.equal(await p.locator("#navigation").isVisible(),false);
 await p.goBack();
 await p.locator(".client-entry-link").waitFor({state:"visible"});
 console.log("PASS isolated client screen and menu at "+width+"px");
-for(const [route,selector] of [["plan","#lab-plan-panel"],["engineering","#le-panel"],["order","#lo-panel"],["3d","#lab-3d-panel"],["ai","#lab-ai-panel"],["config","#lab-config-panel"]]){
+for(const [route,selector] of [["plan","#lab-plan-panel"],["engineering","#le-panel"],["order","#lo-panel"],["3d","#lab-3d-panel"],["ai","#lab-ai-panel"],["config","#lab-config-panel"],["cut","#le-panel"],["estimate","#estimate-panel"]]){
 await p.goto("http://127.0.0.1:"+server.address().port+"/#design-lab/"+route,{waitUntil:"domcontentloaded"});
 await p.locator(selector).waitFor({state:"visible"});
 const issues=await p.locator(selector).evaluate(root=>{
