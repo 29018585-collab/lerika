@@ -436,10 +436,11 @@ class StudioTests(unittest.TestCase):
             migrate_request_numbers(c)
             self.assertEqual(c.execute("SELECT number FROM request_numbers WHERE request_id=?",(b.json["id"],)).fetchone()["number"],row)
         self.assertGreater(row,int(b.json["number"][2:]))
-        self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
+        login=self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
+        self.assertEqual(login.status_code,200)
         listing=self.client.get("/api/projects",base_url=ORIGIN).json["projects"]
         self.assertEqual(next(p["request_number"] for p in listing if p["id"]==a.json["id"]),a.json["number"])
-        with self.client.session_transaction() as session: csrf=session["csrf"]
+        csrf=login.json["csrf"]
         self.assertEqual(self.client.delete("/api/projects/"+a.json["id"],json={"confirm":True},headers={"X-CSRF":csrf},base_url=ORIGIN).status_code,200)
         c=self.submit(self.data());self.assertEqual(c.status_code,201)
         self.assertGreater(int(c.json["number"][2:]),row)
@@ -456,9 +457,10 @@ class StudioTests(unittest.TestCase):
             self.assertTrue(('name="lerika-app-origin" content="'+domain+'"').encode() in r.data)
             self.assertTrue(b'name="lerika-portfolio-api" content="/"' in r.data)
             self.assertEqual(r.headers["Cache-Control"],"no-store")
-            self.assertEqual(self.client.post("/api/design-requests",data=self.data(),headers={"Origin":domain,"X-Lerika-Studio":"5.6"},base_url=domain).status_code,201)
-            self.assertEqual(self.client.post("/api/design-requests",data=self.data(),headers={"Origin":"https://evil.invalid","X-Lerika-Studio":"5.6"},base_url=domain).status_code,403)
-            self.assertEqual(self.client.post("/api/design-requests",data=self.data(),headers={"Origin":ORIGIN,"X-Lerika-Studio":"5.6"},base_url=domain).status_code,403)
+            self.assertEqual(self.client.post("/api/design-requests",data=self.data(),headers={"Origin":domain,"X-Lerika-Studio":"5.6"},base_url=domain,content_type="multipart/form-data").status_code,201)
+            self.assertEqual(self.client.post("/api/design-requests",data=self.data(),headers={"Origin":"https://evil.invalid","X-Lerika-Studio":"5.6"},base_url=domain,content_type="multipart/form-data").status_code,403)
+            self.assertEqual(self.client.post("/api/design-requests",data=self.data(),headers={"Origin":ORIGIN,"X-Lerika-Studio":"5.6"},base_url=domain,content_type="multipart/form-data").status_code,403)
+            self.assertEqual(self.client.post("/api/design-requests",data=self.data(),headers={"Origin":domain,"X-Lerika-Studio":"5.6"},base_url="https://evil.invalid",content_type="multipart/form-data").status_code,403)
             r=self.client.get("/public/portfolio",headers={"Origin":domain},base_url=domain)
             self.assertEqual(r.headers["Access-Control-Allow-Origin"],domain)
             self.assertIn("Origin",r.headers["Vary"])

@@ -49,7 +49,8 @@ def current_public_origin():
     # Match configured origins only, never reflect an arbitrary Host header.
     return next((v for v in sorted(ALLOWED_ORIGINS) if urlsplit(v).netloc==request.host.lower()),PUBLIC_ORIGIN)
 def valid_public_origin():
-    return request.headers.get("Origin") in ALLOWED_ORIGINS and request.headers.get("Origin")==current_public_origin()
+    origin=request.headers.get("Origin")
+    return origin in ALLOWED_ORIGINS and urlsplit(origin).netloc==request.host.lower()
 
 Image.MAX_IMAGE_PIXELS=25000000
 
