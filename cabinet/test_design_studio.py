@@ -231,8 +231,69 @@ class StudioTests(unittest.TestCase):
 
     def test_v520_ignore_untrusted_forwarded_address(self):
         from app import sender_address
-        with app.test_request_context("/",headers={"CF-Connecting-IP":"192.0.2.9","X-Forwarded-For":"192.0.2.10"},environ_overrides={"REMOTE_ADDR":"198.51.100.1"}):
-            self.assertEqual(sender_address(),"198.51.100.1")
+        from unittest.mock import patch
+        with patch.dict(os.environ, {"LERIKA_TRUSTED_CLIENT_IP_HEADER":"CF-Connecting-IP"}):
+            with app.test_request_context("/",headers={"CF-Connecting-IP":"192.0.2.9","X-Forwarded-For":"192.0.2.10"},environ_overrides={"REMOTE_ADDR":"8.8.8.8"}):
+                self.assertEqual(sender_address(),"8.8.8.8")
+
+    def test_v520_render_proxy_header_and_ip_normalization(self):
+        from app import sender_address
+        from unittest.mock import patch
+        with patch.dict(os.environ, {"RENDER":"true","LERIKA_TRUSTED_CLIENT_IP_HEADER":"CF-Connecting-IP"}):
+            cases=[
+                ("8.8.4.4","8.8.4.4"),
+                ("::ffff:8.8.4.4","8.8.4.4"),
+                ("2001:4860:1234:5678::1","2001:4860:1234:5678::/64"),
+                ("2001:4860:1234:5678::2","2001:4860:1234:5678::/64"),
+                ("8.8.8.8, 8.8.4.4","10.0.0.2"),
+                ("invalid","10.0.0.2"),
+                ("","10.0.0.2"),
+            ]
+            for value, expected in cases:
+                with self.subTest(value=value):
+                    with app.test_request_context("/",headers={"CF-Connecting-IP":value,"X-Forwarded-For":"1.1.1.1"},environ_overrides={"REMOTE_ADDR":"10.0.0.2"}):
+                        self.assertEqual(sender_address(),expected)
+
+    def test_v520_proxy_order_limit_ignores_spoofed_xff(self):
+        from unittest.mock import patch
+        with patch.dict(os.environ, {"RENDER":"true","LERIKA_TRUSTED_CLIENT_IP_HEADER":"CF-Connecting-IP"}):
+            for i in range(12):
+                h={**HEADERS,"CF-Connecting-IP":"8.8.8.8","X-Forwarded-For":"192.0.2."+str(i+1)}
+                self.assertEqual(self.submit(self.data(),headers=h,ip="10.0.0.2").status_code,201)
+            h={**HEADERS,"CF-Connecting-IP":"8.8.8.8","X-Forwarded-For":"192.0.2.99"}
+            self.assertEqual(self.submit(self.data(),headers=h,ip="10.0.0.2").status_code,429)
+            h["CF-Connecting-IP"]="8.8.4.4"
+            self.assertEqual(self.submit(self.data(),headers=h,ip="10.0.0.2").status_code,201)
+
+    def test_v520_logout_does_not_clear_other_role(self):
+        h={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        d={"name":"Test","email":"a@example.invalid","password":"long-test-password-123","consent":True}
+        self.assertEqual(self.client.post("/api/client/register",json=d,headers=h,base_url=ORIGIN).status_code,201)
+        login=self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
+        self.assertEqual(login.status_code,200)
+        self.assertEqual(self.client.post("/logout",headers={"X-CSRF":login.json["csrf"]},base_url=ORIGIN).status_code,200)
+        self.assertEqual(self.client.get("/session",base_url=ORIGIN).status_code,401)
+        self.assertEqual(self.client.get("/api/client/session",base_url=ORIGIN).status_code,200)
+        login=self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
+        self.assertEqual(login.status_code,200)
+        self.assertEqual(self.client.post("/api/client/logout",json={},headers=h,base_url=ORIGIN).status_code,200)
+        self.assertEqual(self.client.get("/api/client/session",base_url=ORIGIN).status_code,401)
+        self.assertEqual(self.client.get("/session",base_url=ORIGIN).status_code,200)
+
+    def test_v520_sqlite_connections_close_on_success_and_exception(self):
+        import sqlite3
+        with db() as c:
+            self.assertEqual(c.execute("SELECT 1").fetchone()[0],1)
+        with self.assertRaises(sqlite3.ProgrammingError):
+            c.execute("SELECT 1")
+        with self.assertRaisesRegex(RuntimeError,"rollback probe"):
+            with db() as c:
+                c.execute("INSERT INTO client_limits VALUES(?,?,?)",("qa-rollback",1,1))
+                raise RuntimeError("rollback probe")
+        with self.assertRaises(sqlite3.ProgrammingError):
+            c.execute("SELECT 1")
+        with db() as check:
+            self.assertIsNone(check.execute("SELECT action FROM client_limits WHERE action=?",("qa-rollback",)).fetchone())
 
     def test_showroom_local_revision_and_csp(self):
         r=self.client.get("/showroom/")
