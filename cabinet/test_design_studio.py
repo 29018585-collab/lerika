@@ -67,6 +67,43 @@ class StudioTests(unittest.TestCase):
         self.assertNotIn("private_brief",public)
         self.assertNotIn("test@example.invalid",str(public))
         self.assertNotIn("Пожелания: тест",str(public))
+    def test_universal_order_originals_and_privacy(self):
+        import zipfile
+        z=io.BytesIO()
+        with zipfile.ZipFile(z,"w") as archive: archive.writestr("design.txt","original")
+        archive=z.getvalue()
+        photo=png()
+        d=self.data()
+        d["files"]=[(io.BytesIO(archive),"project.zip"),(io.BytesIO(photo),"photo.png"),(io.BytesIO(b"%PDF-1.4\n%%EOF"),"drawing.pdf"),(io.BytesIO(b"part;size"),"parts.csv")]
+        headers={"Origin":ORIGIN,"X-Lerika-Studio":"5.8"}
+        r=self.client.post("/api/order-requests",data=d,headers=headers,base_url=ORIGIN,content_type="multipart/form-data")
+        self.assertEqual(r.status_code,201)
+        rid=r.json["id"]
+        with db() as c:
+            files={f["name"]:f for f in c.execute("SELECT * FROM files WHERE project=?",(rid,))}
+            self.assertEqual(len(files),4)
+            self.assertEqual(bytes(files["project.zip"]["data"]),archive)
+            self.assertEqual(bytes(files["photo.png"]["data"]),photo)
+            self.assertTrue(all(f["image"]==0 and f["public"]==0 for f in files.values()))
+            self.assertTrue(c.execute("SELECT title FROM projects WHERE id=?",(rid,)).fetchone()["title"].startswith("Заказ"))
+        self.assertEqual(self.client.get("/public/portfolio").json["projects"],[])
+        login=self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
+        csrf=login.json["csrf"]
+        for f in files.values():
+            download=self.client.get("/api/files/"+f["id"],base_url=ORIGIN)
+            self.assertEqual(download.status_code,200)
+            self.assertIn("attachment",download.headers["Content-Disposition"])
+            self.assertEqual(self.client.put("/api/files/"+f["id"],json={"public":True},headers={"X-CSRF":csrf},base_url=ORIGIN).status_code,400)
+    def test_universal_order_rejects_bad_archive_and_executable(self):
+        for name in ("bad.zip","program.exe"):
+            d=self.data();d["files"]=(io.BytesIO(b"not an archive"),name)
+            self.assertEqual(self.client.post("/api/order-requests",data=d,headers={"Origin":ORIGIN,"X-Lerika-Studio":"5.8"},base_url=ORIGIN,content_type="multipart/form-data").status_code,415)
+        with db() as c:self.assertEqual(c.execute("SELECT COUNT(*) AS n FROM projects").fetchone()["n"],0)
+    def test_universal_text_only_order(self):
+        d=self.data()
+        headers={"Origin":ORIGIN,"X-Lerika-Studio":"5.8"}
+        for expected in (201,200):
+            self.assertEqual(self.client.post("/api/order-requests",data=d,headers=headers,base_url=ORIGIN,content_type="multipart/form-data").status_code,expected)
     def test_duplicate(self):
         d=self.data()
         self.assertEqual(self.submit(d.copy()).status_code,201)

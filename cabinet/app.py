@@ -262,8 +262,10 @@ def project_record(p):
 
 # Public intake accepts only new private drafts, never changes existing projects.
 @app.post("/api/design-requests")
+@app.post("/api/order-requests")
 def design_request():
-    if request.headers.get("Origin")!="https://lerika-cabinet.onrender.com" or request.headers.get("X-Lerika-Studio")!="5.6":
+    order=request.path=="/api/order-requests"
+    if request.headers.get("Origin")!="https://lerika-cabinet.onrender.com" or request.headers.get("X-Lerika-Studio")!=("5.8" if order else "5.6"):
         abort(403)
     if request.mimetype!="multipart/form-data":
         abort(415)
@@ -284,9 +286,9 @@ def design_request():
         if c.execute("SELECT COUNT(*) AS n FROM design_requests WHERE created>?",(now-3600,)).fetchone()["n"]>=12 or c.execute("SELECT COUNT(*) AS n FROM design_requests WHERE created>?",(now-86400,)).fetchone()["n"]>=40: abort(429)
     files=request.files.getlist("files")
     collages=request.files.getlist("collage")
-    if len(files)>6 or len(collages)>1 or any(k not in ("files","collage") for k in request.files):
+    if len(files)>(10 if order else 6) or len(collages)>(0 if order else 1) or any(k not in ("files","collage") for k in request.files):
         abort(400)
-    if not files and not collages and "Пожелания: не указаны" in brief:
+    if not order and not files and not collages and "Пожелания: не указаны" in brief:
         abort(400)
     attachments=[]
     total=0
@@ -294,15 +296,23 @@ def design_request():
         is_collage=bool(collages and f is collages[0])
         name=Path((f.filename or "").replace(chr(92),"/")).name[:160]
         suffix=Path(name).suffix.lower()
-        if suffix not in (".jpg",".jpeg",".png",".webp",".pdf") or (is_collage and suffix!=".png"):
+        allowed=(".jpg",".jpeg",".png",".webp",".pdf",".zip",".rar",".7z",".doc",".docx",".xls",".xlsx",".xlsm",".csv",".txt",".dxf",".dwg",".sto",".skp",".heic",".heif",".tif",".tiff") if order else (".jpg",".jpeg",".png",".webp",".pdf")
+        if suffix not in allowed or (is_collage and suffix!=".png"):
             abort(415)
-        limit=(2 if is_collage else 8)*1024*1024
+        limit=(12 if order else 2 if is_collage else 8)*1024*1024
         raw=f.read(limit+1)
         if not raw or len(raw)>limit: abort(413)
         if not is_collage:
             total+=len(raw)
             if total>12*1024*1024: abort(413)
-        if suffix==".pdf":
+        if order:
+            # Original files only; never extract archives, run macros, or expose inline.
+            if suffix==".pdf" and not raw.startswith(b"%PDF-"): abort(415)
+            if suffix in (".zip",".docx",".xlsx",".xlsm") and not raw.startswith((b"PK\x03\x04",b"PK\x05\x06")): abort(415)
+            if suffix==".rar" and not raw.startswith(b"Rar!\x1a\x07"): abort(415)
+            if suffix==".7z" and not raw.startswith(b"7z\xbc\xaf\x27\x1c"): abort(415)
+            mime="application/octet-stream"; image=0
+        elif suffix==".pdf":
             if not raw.startswith(b"%PDF-"): abort(415)
             mime="application/octet-stream"; image=0
         else:
@@ -339,7 +349,7 @@ def design_request():
             abort(429)
         used=c.execute("SELECT COALESCE(SUM(length(data)),0) AS bytes_used FROM files").fetchone()["bytes_used"]
         if used+sum(len(v[3]) for v in attachments)>350*1024*1024: abort(413)
-        c.execute("INSERT INTO projects(category,title,description,stage,status,published,updated,id) VALUES(?,?,?,?,?,?,?,?)",(categories[room],"Заявка · "+room+" · "+rid[:6],"Заявка из дизайн-студии ЛериКа",1,"work",0,now,rid))
+        c.execute("INSERT INTO projects(category,title,description,stage,status,published,updated,id) VALUES(?,?,?,?,?,?,?,?)",(categories[room],("Заказ" if order else "Заявка")+" · "+room+" · "+rid[:6],"Заявка на заказ ЛериКа" if order else "Заявка из дизайн-студии ЛериКа",1,"work",0,now,rid))
         c.execute("INSERT INTO design_briefs VALUES(?,?)",(rid,private_brief))
         for name,mime,image,raw in attachments:
             # Attachments (including the collage) are private by default.
