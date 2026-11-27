@@ -120,6 +120,13 @@ def admin(f):
 def home():
     return redirect("/showroom/",code=302)
 
+@app.get("/support/telegram")
+def support_telegram():
+    username=os.environ.get("LERIKA_SUPPORT_BOT_USERNAME","").strip().lstrip("@")
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{2,28}bot",username,re.I) and 5<=len(username)<=32:
+        return redirect("https://t.me/"+username,code=302)
+    return ('<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ЛериКа · Telegram</title><h1>Telegram-поддержка пока не подключена</h1><p>Вы можете отправить вопрос через форму поддержки ЛериКа.</p><p><a href="/showroom/#support">Вернуться к форме поддержки</a></p></html>',503,{"Content-Type":"text/html; charset=utf-8"})
+
 @app.get("/cabinet/")
 def index():
     return render_template("admin.html")

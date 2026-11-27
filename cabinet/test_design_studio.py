@@ -120,6 +120,16 @@ class StudioTests(unittest.TestCase):
         rows=self.client.get("/api/projects",base_url=ORIGIN).json["projects"]
         self.assertEqual({p["request_source"] for p in rows},set(expected+["ai"]))
         self.assertTrue(all(p["request_created"] and p["published"]==0 for p in rows))
+    def test_support_telegram_route(self):
+        from unittest.mock import patch
+        with patch.dict(os.environ,{"LERIKA_SUPPORT_BOT_USERNAME":"@LerikaTestSupportBot"}):
+            r=self.client.get("/support/telegram",base_url=ORIGIN)
+            self.assertEqual(r.status_code,302)
+            self.assertEqual(r.headers["Location"],"https://t.me/LerikaTestSupportBot")
+        with patch.dict(os.environ,{"LERIKA_SUPPORT_BOT_USERNAME":"https://untrusted.invalid"}):
+            r=self.client.get("/support/telegram",base_url=ORIGIN)
+            self.assertEqual(r.status_code,503)
+            self.assertNotIn("Location",r.headers)
     def test_duplicate(self):
         d=self.data()
         self.assertEqual(self.submit(d.copy()).status_code,201)
