@@ -25,8 +25,8 @@ class StudioTests(unittest.TestCase):
                 c.execute("DELETE FROM "+table)
     def data(self,rid=None):
         return dict(request_id=rid or secrets.token_hex(16),consent="yes",title="Тест кухни",room="Кухня",contact="test@example.invalid",brief="Пожелания: тест")
-    def submit(self,data,headers=HEADERS):
-        return self.client.post("/api/design-requests",data=data,headers=headers,base_url=ORIGIN,content_type="multipart/form-data")
+    def submit(self,data,headers=HEADERS,ip="198.51.100.1"):
+        return self.client.post("/api/design-requests",data=data,headers=headers,base_url=ORIGIN,content_type="multipart/form-data",environ_overrides={"REMOTE_ADDR":ip})
     def test_submit_with_files_collage_and_privacy(self):
         d=self.data()
         d["files"]=[(io.BytesIO(png()),"photo.png"),(io.BytesIO(b"%PDF-1.4\n%%EOF"),"drawing.pdf")]
@@ -62,11 +62,8 @@ class StudioTests(unittest.TestCase):
         csrf=login.json["csrf"]
         p=self.client.get("/api/projects",base_url=ORIGIN).json["projects"][0]
         self.assertIn("test@example.invalid",p["private_brief"])
-        self.assertEqual(self.client.put("/api/projects/"+rid,base_url=ORIGIN,headers={"X-CSRF":csrf},json={**p,"published":True}).status_code,200)
-        public=self.client.get("/public/portfolio").json["projects"][0]
-        self.assertNotIn("private_brief",public)
-        self.assertNotIn("test@example.invalid",str(public))
-        self.assertNotIn("Пожелания: тест",str(public))
+        self.assertEqual(self.client.put("/api/projects/"+rid,base_url=ORIGIN,headers={"X-CSRF":csrf},json={**p,"published":True}).status_code,403)
+        self.assertEqual(self.client.get("/public/portfolio").json["projects"],[])
     def test_universal_order_originals_and_privacy(self):
         import zipfile
         z=io.BytesIO()
@@ -192,6 +189,51 @@ class StudioTests(unittest.TestCase):
     def test_rate_limit(self):
         for i in range(12):self.assertEqual(self.submit(self.data()).status_code,201)
         self.assertEqual(self.submit(self.data()).status_code,429)
+        self.assertEqual(self.submit(self.data(),ip="198.51.100.2").status_code,201)
+    def test_v520_login_sender_isolation(self):
+        for _ in range(8):
+            self.assertEqual(self.client.post("/login",json={"password":"wrong"},base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":"198.51.100.1"}).status_code,401)
+        self.assertEqual(self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":"198.51.100.1"}).status_code,429)
+        self.assertEqual(self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":"198.51.100.2"}).status_code,200)
+        headers={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        d={"name":"Test","email":"a@example.invalid","password":"long-test-password-123","consent":True}
+        self.assertEqual(self.client.post("/api/client/register",json=d,headers=headers,base_url=ORIGIN).status_code,201)
+        for _ in range(8):
+            self.assertEqual(self.client.post("/api/client/login",json={**d,"password":"wrong"},headers=headers,base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":"198.51.100.1"}).status_code,401)
+        self.assertEqual(self.client.post("/api/client/login",json=d,headers=headers,base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":"198.51.100.1"}).status_code,429)
+        self.assertEqual(self.client.post("/api/client/login",json=d,headers=headers,base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":"198.51.100.2"}).status_code,200)
+        self.assertEqual(self.client.get("/api/projects",base_url=ORIGIN).status_code,200)
+
+    def test_v520_private_files_and_delete(self):
+        headers={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        d={"name":"Test","email":"a@example.invalid","password":"long-test-password-123","consent":True}
+        self.assertEqual(self.client.post("/api/client/register",json=d,headers=headers,base_url=ORIGIN).status_code,201)
+        order=self.data();order["files"]=[(io.BytesIO(png()),"one.png"),(io.BytesIO(png()),"two.png")]
+        rid=self.submit(order).json["id"]
+        self.assertEqual(self.client.delete("/api/projects/"+rid,json={"confirm":True},base_url=ORIGIN).status_code,401)
+        login=self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
+        h={"X-CSRF":login.json["csrf"]}
+        self.assertEqual(self.client.get("/api/client/session",base_url=ORIGIN).status_code,200)
+        p=self.client.get("/api/projects",base_url=ORIGIN).json["projects"][0]
+        fid=p["files"][0]["id"]
+        self.assertEqual(self.client.put("/api/files/"+fid,json={"public":True},headers=h,base_url=ORIGIN).status_code,403)
+        self.assertEqual(self.client.delete("/api/files/"+fid,json={"confirm":True},base_url=ORIGIN).status_code,403)
+        self.assertEqual(self.client.delete("/api/files/"+fid,json={"confirm":False},headers=h,base_url=ORIGIN).status_code,400)
+        self.assertEqual(self.client.delete("/api/files/"+fid,json={"confirm":True},headers=h,base_url=ORIGIN).status_code,200)
+        self.assertEqual(self.client.get("/api/files/"+fid,base_url=ORIGIN).status_code,404)
+        cid=self.client.get("/api/clients",base_url=ORIGIN).json["clients"][0]["id"]
+        self.assertEqual(self.client.delete("/api/clients/"+cid,json={"confirm":True},headers=h,base_url=ORIGIN).status_code,200)
+        self.assertEqual(self.client.get("/api/client/session",base_url=ORIGIN).status_code,401)
+        with db() as c:
+            for table in ("projects","files","client_requests","design_briefs","design_requests","clients"):
+                self.assertEqual(c.execute("SELECT COUNT(*) AS n FROM "+table).fetchone()["n"],0)
+        self.assertEqual(self.client.get("/api/projects",base_url=ORIGIN).status_code,200)
+
+    def test_v520_ignore_untrusted_forwarded_address(self):
+        from app import sender_address
+        with app.test_request_context("/",headers={"CF-Connecting-IP":"192.0.2.9","X-Forwarded-For":"192.0.2.10"},environ_overrides={"REMOTE_ADDR":"198.51.100.1"}):
+            self.assertEqual(sender_address(),"198.51.100.1")
+
     def test_showroom_local_revision_and_csp(self):
         r=self.client.get("/showroom/")
         self.assertEqual(r.status_code,200)
