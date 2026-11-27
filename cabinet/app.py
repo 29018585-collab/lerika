@@ -5,8 +5,12 @@ from flask import Flask, request, session, abort, jsonify, render_template, send
 from werkzeug.security import check_password_hash
 from PIL import Image, ImageOps
 
+DATABASE_URL=os.environ.get("DATABASE_URL","")
+if os.environ.get("RENDER") and not DATABASE_URL:
+    raise RuntimeError("Render requires persistent PostgreSQL DATABASE_URL")
 ROOT=Path(os.environ.get("DATA_DIR","/data"))
-ROOT.mkdir(parents=True,exist_ok=True)
+if not DATABASE_URL:
+    ROOT.mkdir(parents=True,exist_ok=True)
 DB=ROOT/"portfolio.sqlite3"
 KEY=os.environ.get("SESSION_SECRET","")
 PASSWORD=os.environ.get("ADMIN_PASSWORD_HASH","")
@@ -19,12 +23,39 @@ STAGES=["Исходное помещение","Замеры и эскизы","3D
 ORIGIN="https://29018585-collab.github.io"
 Image.MAX_IMAGE_PIXELS=25000000
 
+class PostgresDB:
+    def __init__(self):
+        import psycopg
+        from psycopg.rows import dict_row
+        self.conn=psycopg.connect(DATABASE_URL,row_factory=dict_row,connect_timeout=15)
+    def __enter__(self):
+        self.conn.__enter__()
+        return self
+    def __exit__(self,*args):
+        return self.conn.__exit__(*args)
+    def execute(self,sql,params=()):
+        return self.conn.execute(sql.replace("?", "%s"),params)
+    def executescript(self,sql):
+        for statement in sql.replace("BLOB","BYTEA").split(";"):
+            if statement.strip(): self.conn.execute(statement)
+    def commit(self):
+        self.conn.commit()
+
 def db():
+    if DATABASE_URL:
+        return PostgresDB()
     c=sqlite3.connect(DB,timeout=10)
     c.row_factory=sqlite3.Row
     c.execute("PRAGMA foreign_keys=ON")
     return c
+def lock(c,key):
+    if DATABASE_URL:
+        c.execute("SELECT pg_advisory_xact_lock(?)",(key,))
+    else:
+        c.execute("BEGIN IMMEDIATE")
+
 with db() as c:
+    lock(c,82001)
     c.executescript("""
     CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY, category INTEGER NOT NULL CHECK(category BETWEEN 1 AND 8), title TEXT NOT NULL, description TEXT NOT NULL, stage INTEGER NOT NULL CHECK(stage BETWEEN 1 AND 6), status TEXT NOT NULL CHECK(status IN ('work','ready')), published INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS files(id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id), stage INTEGER NOT NULL CHECK(stage BETWEEN 1 AND 6), name TEXT NOT NULL, mime TEXT NOT NULL, image INTEGER NOT NULL, public INTEGER NOT NULL DEFAULT 0, data BLOB NOT NULL);
@@ -69,13 +100,13 @@ def login():
     if len(password)>512: abort(400)
     now=int(time.time())
     with db() as c:
-        c.execute("BEGIN IMMEDIATE")
+        lock(c,82002)
         row=c.execute("SELECT count,since FROM attempts WHERE id=1").fetchone()
         count=row["count"] if row and now-row["since"]<900 else 0
         since=row["since"] if count else now
         if count>=8: abort(429)
         if not check_password_hash(PASSWORD,password):
-            c.execute("INSERT OR REPLACE INTO attempts VALUES(1,?,?)",(count+1,since))
+            c.execute("INSERT INTO attempts VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET count=excluded.count,since=excluded.since",(count+1,since))
             c.commit()
             abort(401)
         c.execute("DELETE FROM attempts WHERE id=1")
@@ -157,8 +188,9 @@ def upload(p):
                 raw=buf.getvalue(); is_image=1; mime="image/jpeg"
         except Exception: abort(415)
     with db() as c:
+        lock(c,82003)
         if not c.execute("SELECT 1 FROM projects WHERE id=?",(p,)).fetchone(): abort(404)
-        if c.execute("SELECT COALESCE(SUM(length(data)),0) FROM files").fetchone()[0]+len(raw)>500*1024*1024: abort(413)
+        if c.execute("SELECT COALESCE(SUM(length(data)),0) AS bytes_used FROM files").fetchone()["bytes_used"]+len(raw)>350*1024*1024: abort(413)
         fid=secrets.token_hex(16)
         c.execute("INSERT INTO files VALUES(?,?,?,?,?,?,0,?)",(fid,p,stage,name,mime,is_image,raw))
     return jsonify(id=fid),201
@@ -184,7 +216,7 @@ def set_cover(cat):
     with db() as c:
         f=c.execute("SELECT f.id FROM files f JOIN projects p ON p.id=f.project WHERE f.id=? AND f.image=1 AND f.public=1 AND p.published=1 AND p.category=?",(data["file"],cat)).fetchone()
         if not f: abort(400)
-        c.execute("INSERT OR REPLACE INTO covers VALUES(?,?)",(cat,f["id"]))
+        c.execute("INSERT INTO covers VALUES(?,?) ON CONFLICT(category) DO UPDATE SET file=excluded.file",(cat,f["id"]))
     return jsonify(ok=True)
 
 @app.get("/api/files/<fid>")
