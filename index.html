@@ -577,14 +577,14 @@ if(m.type==="wardrobe"&&m.h<800)return false;
 if(m.d>1000)return false;return (m.w-(m.n+1)*m.t)/m.n>=220||!modular.has(m.type)}
 function valid(m,opt={}){return !!build(m,opt)}
 function build(m,opt={}){if(!basicValid(m))return null;try{const {w,h,t,ft,type}=m,construction=optionsFor(m),{foot,top:cap,back:backMode,gap,shelves}=construction,outerD=m.d,low=lowTypes.has(type),rear=low&&backMode==="overlay"?4:0,d=low?outerD-ft-gap-rear:outerD,n=modular.has(type)?m.n:presets[type][4],bc=opt.body||"#a5815e",fc=opt.face||"#d1c0aa",tc=opt.top||bc,metal=opt.handle==="brass"?"#c8a265":"#302e2a",parts=[],boxes=[],controls={doors:[],drawers:[],light:type==="wardrobe"||type==="hall"};
-const B=(x,y,z,a,b,c,color,hinge=null,angle=0)=>{if([x,y,z,a,b,c].every(Number.isFinite)&&a>0&&b>0&&c>0)boxes.push({x,y,z,a,b,c,color,hinge,angle});else throw Error("Invalid box "+[x,y,z,a,b,c])};
-function P(name,a,b,th,material="Корпус",qty=1,role=material==="Фасад"?"front":material==="ХДФ"?"back":"body",grain=material==="ХДФ"?"none":"a"){if(Math.min(a,b,th)<=0)throw Error("Invalid part "+name);parts.push({name,a:Math.round(a*10)/10,b:Math.round(b*10)/10,th,material,qty,role,grain})}
-function flat(name,x,y,z,a,c,th=t,color=bc,mat="Корпус",role){P(name,a,c,th,mat,1,role);B(x,y,z,a,th,c,color)}
-function side(name,x,y,z,b,c,th=t,color=bc){P(name,b,c,th);B(x,y,z,th,b,c,color)}
-function back(name,x,y,z,a,b,th=t,color=bc,mat="Корпус"){P(name,a,b,th,mat,1,undefined,mat==="ХДФ"?"none":"b");B(x,y,z,a,b,th,color)}
+const B=(x,y,z,a,b,c,color,hinge=null,angle=0,partIndex=0)=>{if([x,y,z,a,b,c].every(Number.isFinite)&&a>0&&b>0&&c>0)boxes.push({x,y,z,a,b,c,color,hinge,angle,partIndex});else throw Error("Invalid box "+[x,y,z,a,b,c])};
+function P(name,a,b,th,material="Корпус",qty=1,role=material==="Фасад"?"front":material==="ХДФ"?"back":"body",grain=material==="ХДФ"?"none":"a"){if(Math.min(a,b,th)<=0)throw Error("Invalid part "+name);parts.push({name,a:Math.round(a*10)/10,b:Math.round(b*10)/10,th,material,qty,role,grain});return parts.length}
+function flat(name,x,y,z,a,c,th=t,color=bc,mat="Корпус",role){const part=P(name,a,c,th,mat,1,role);B(x,y,z,a,th,c,color,null,0,part)}
+function side(name,x,y,z,b,c,th=t,color=bc){const part=P(name,b,c,th);B(x,y,z,th,b,c,color,null,0,part)}
+function back(name,x,y,z,a,b,th=t,color=bc,mat="Корпус"){const part=P(name,a,b,th,mat,1,undefined,mat==="ХДФ"?"none":"b");B(x,y,z,a,b,th,color,null,0,part)}
 function handle(x,y,z,a,b,hinge,angle){if(opt.handle!=="none")B(x,y,z,a,b,12,metal,hinge,angle)}
-function door(x,y,z,a,b){const id=controls.doors.length;controls.doors.push({id,x,y});const hinge=[x,z],angle=(opt.doors===true||opt.doors==="all"||String(opt.doors)===String(id))&&opt.doors!==false?Math.PI*.52:0;P("Распашной фасад",a,b,ft,"Фасад",1,"front","b");B(x,y,z,a,b,ft,fc,hinge,angle);handle(x+a-25,y+b*.45,z+ft,10,Math.min(100,b*.25),hinge,angle)}
-function drawer(x,y,z,a,b,dep,idx=0,count=1){const aa=a-24,hh=Math.max(40,b-35),dd=dep-36,xx=x+12;if(aa<=2*t||dd<=2*t||b<50)throw Error("Ящик не помещается");const id=controls.drawers.length,row=count===1?"single":idx===0?"bottom":idx===count-1?"top":"middle";controls.drawers.push({id,x,y,row});const target=opt.drawers,open=target===true?idx===0:target==="all"||target===row||target==="id:"+id,shift=open?dd*Math.max(0,Math.min(1,opt.extension??.75)):0,zz=z+12+shift;P("Фасад ящика",a-2*gap,b-2*gap,ft,"Фасад");B(x+gap,y+gap,z+dep+gap+shift,a-2*gap,b-2*gap,ft,fc);handle(x+a/2-30,y+b*.62,z+dep+gap+ft+shift,60,8);
+function door(x,y,z,a,b){const id=controls.doors.length;controls.doors.push({id,x,y});const hinge=[x,z],angle=(opt.doors===true||opt.doors==="all"||String(opt.doors)===String(id))&&opt.doors!==false?Math.PI*.52:0;const part=P("Распашной фасад",a,b,ft,"Фасад",1,"front","b");B(x,y,z,a,b,ft,fc,hinge,angle,part);handle(x+a-25,y+b*.45,z+ft,10,Math.min(100,b*.25),hinge,angle)}
+function drawer(x,y,z,a,b,dep,idx=0,count=1){const aa=a-24,hh=Math.max(40,b-35),dd=dep-36,xx=x+12;if(aa<=2*t||dd<=2*t||b<50)throw Error("Ящик не помещается");const id=controls.drawers.length,row=count===1?"single":idx===0?"bottom":idx===count-1?"top":"middle";controls.drawers.push({id,x,y,row});const target=opt.drawers,open=target===true?idx===0:target==="all"||target===row||target==="id:"+id,shift=open?dd*Math.max(0,Math.min(1,opt.extension??.75)):0,zz=z+12+shift;const part=P("Фасад ящика",a-2*gap,b-2*gap,ft,"Фасад");B(x+gap,y+gap,z+dep+gap+shift,a-2*gap,b-2*gap,ft,fc,null,0,part);handle(x+a/2-30,y+b*.62,z+dep+gap+ft+shift,60,8);
 side("Боковина ящика",xx,y+4,zz,hh,dd);side("Боковина ящика",xx+aa-t,y+4,zz,hh,dd);
 back("Стенка ящика",xx+t,y+4,zz,aa-2*t,hh);back("Стенка ящика",xx+t,y+4,zz+dd-t,aa-2*t,hh);
 flat("Дно ящика",xx,y,zz,aa,dd,4,"#baac98","ХДФ")}
@@ -981,9 +981,48 @@ for(const [group,items] of groups){const local=[];for(const p of items.sort((a,b
 for(const sh of local){for(const row of sh.rows){const o=orientations.find(o=>o.h<=row.h&&row.x+o.w<=W);if(o){pos={sh,row,o};break}}if(pos)break;const o=orientations.find(o=>sh.y+o.h<=H);if(o){const row={y:sh.y,h:o.h,x:0};sh.rows.push(row);sh.y+=o.h+kerf;pos={sh,row,o};break}}
 if(!pos){const o=orientations.slice().sort((a,b)=>a.h-b.h)[0],row={y:0,h:o.h,x:0},sh={group,rows:[row],y:o.h+kerf,placed:[]};local.push(sh);sheets.push(sh);pos={sh,row,o}}const {sh,row,o}=pos;sh.placed.push({...o,x:margin+row.x,y:margin+row.y,id:p.id,unit:p.unit});row.x+=o.w+kerf}}
 return {sheets,oversize,settings}}
-function dxf(model,mode,cut){const p=projection(model,mode,cut),out=["0","SECTION","2","HEADER","9","$INSUNITS","70","4","0","ENDSEC","0","SECTION","2","ENTITIES"];const line=(x,y,a,b)=>out.push("0","LINE","8","CONTOURS","10",String(x),"20",String(p.h-y),"30","0","11",String(a),"21",String(p.h-b),"31","0");for(const r of p.rects){line(r.x,r.y,r.x+r.w,r.y);line(r.x+r.w,r.y,r.x+r.w,r.y+r.h);line(r.x+r.w,r.y+r.h,r.x,r.y+r.h);line(r.x,r.y+r.h,r.x,r.y)}out.push("0","ENDSEC","0","EOF");return out.join("\r\n")+"\r\n"}
+// Orthographic DXF uses only modeled panel boxes linked to the parts list.
+// Rendering accessories stay in the visual model, not the CAD export.
+function panelProjection(model,mode,cut=50){
+const boxes=model.boxes.filter(b=>Number.isInteger(b.partIndex)&&b.partIndex>0);
+if(!boxes.length)return {rects:[],w:0,h:0};
+const minX=Math.min(...boxes.map(b=>b.x)),maxX=Math.max(...boxes.map(b=>b.x+b.a)),minY=Math.min(...boxes.map(b=>b.y)),maxY=Math.max(...boxes.map(b=>b.y+b.b)),minZ=Math.min(...boxes.map(b=>b.z)),maxZ=Math.max(...boxes.map(b=>b.z+b.c));
+return projection({...model,boxes,bounds:{minX,maxX,minY,maxY,minZ,maxZ,w:maxX-minX,h:maxY-minY,d:maxZ-minZ}},mode,cut);
+}
+function contourSegments(rects){
+const eps=1e-7,clean=v=>Math.round(v*1e6)/1e6,segments=new Map();
+for(const r of rects)for(const edge of [{axis:"x",fixed:r.y,lo:r.x,hi:r.x+r.w},{axis:"x",fixed:r.y+r.h,lo:r.x,hi:r.x+r.w},{axis:"y",fixed:r.x,lo:r.y,hi:r.y+r.h},{axis:"y",fixed:r.x+r.w,lo:r.y,hi:r.y+r.h}]){
+ const {axis,fixed,lo,hi}=edge,horizontal=axis==="x";
+ const stops=[lo,hi];
+ for(const o of rects){const a=horizontal?o.y:o.x,b=a+(horizontal?o.h:o.w);if(fixed<a-eps||fixed>b+eps)continue;const l=horizontal?o.x:o.y,h=l+(horizontal?o.w:o.h);if(l>lo+eps&&l<hi-eps)stops.push(l);if(h>lo+eps&&h<hi-eps)stops.push(h)}
+ const sorted=[...new Set(stops.map(clean))].sort((a,b)=>a-b);
+ for(let i=1;i<sorted.length;i++){const a=sorted[i-1],b=sorted[i];if(b-a<=eps)continue;
+ const x=horizontal?(a+b)/2:fixed,y=horizontal?fixed:(a+b)/2;
+ const cover=rects.reduce((d,o)=>x>=o.x-eps&&x<=o.x+o.w+eps&&y>=o.y-eps&&y<=o.y+o.h+eps?Math.max(d,o.depth):d,-Infinity);
+ const key=[axis,clean(fixed),a,b].join("|"),visible=r.depth>=cover-eps;
+ const prev=segments.get(key);
+ if(!prev||visible&&!prev.visible)segments.set(key,{x1:horizontal?a:clean(fixed),y1:horizontal?clean(fixed):a,x2:horizontal?b:clean(fixed),y2:horizontal?clean(fixed):b,visible});
+ }
+}
+return [...segments.values()];
+}
+function dxf(model,mode,cut){
+const p=panelProjection(model,mode,cut),out=["0","SECTION","2","HEADER","9","$ACADVER","1","AC1015","9","$INSUNITS","70","4","0","ENDSEC","0","SECTION","2","TABLES","0","TABLE","2","LTYPE","70","2","0","LTYPE","2","CONTINUOUS","70","0","3","Solid line","72","65","73","0","40","0","0","LTYPE","2","DASHED","70","0","3","Hidden dash","72","65","73","2","40","12","49","8","74","0","49","-4","74","0","0","ENDTAB","0","TABLE","2","LAYER","70","3"];
+for(const [name,color,lineType] of [["VISIBLE",7,"CONTINUOUS"],["HIDDEN",8,"DASHED"],["DIMENSIONS",3,"CONTINUOUS"]])out.push("0","LAYER","2",name,"70","0","62",String(color),"6",lineType);
+out.push("0","ENDTAB","0","ENDSEC","0","SECTION","2","ENTITIES");
+const num=v=>String(Math.round(v*1e6)/1e6),line=(layer,x,y,a,b)=>out.push("0","LINE","8",layer,"10",num(x),"20",num(p.h-y),"30","0","11",num(a),"21",num(p.h-b),"31","0");
+for(const s of contourSegments(p.rects))line(s.visible?"VISIBLE":"HIDDEN",s.x1,s.y1,s.x2,s.y2);
+if(p.rects.length){
+const pad=Math.max(30,Math.min(p.w,p.h)*.04),tick=pad*.12,text=(x,y,v)=>out.push("0","TEXT","8","DIMENSIONS","10",num(x),"20",num(p.h-y),"30","0","40",num(Math.max(10,pad*.28)),"1",num(v)+" mm");
+line("DIMENSIONS",0,0,0,-pad-tick);line("DIMENSIONS",p.w,0,p.w,-pad-tick);line("DIMENSIONS",0,-pad,p.w,-pad);
+line("DIMENSIONS",-tick,-pad-tick,tick,-pad+tick);line("DIMENSIONS",p.w-tick,-pad-tick,p.w+tick,-pad+tick);text(p.w*.45,-pad-tick,p.w);
+line("DIMENSIONS",0,0,-pad-tick,0);line("DIMENSIONS",0,p.h,-pad-tick,p.h);line("DIMENSIONS",-pad,0,-pad,p.h);
+line("DIMENSIONS",-pad-tick,-tick,-pad+tick,tick);line("DIMENSIONS",-pad-tick,p.h-tick,-pad+tick,p.h+tick);text(-pad*2,p.h*.5,p.h);
+}
+out.push("0","ENDSEC","0","EOF");return out.join("\r\n")+"\r\n";
+}
 function csv(model){const num=v=>String(v).replace(".",",");return "\uFEFF№;Наименование;Длина мм;Ширина мм;Толщина мм;Количество;Группа;Площадь м²\n"+model.parts.map(p=>[p.id,p.name,num(p.a),num(p.b),num(p.th),p.qty,p.material,num(p.area.toFixed(5))].join(";")).join("\n")+"\n"}
-return {build,projection,exploded,packing,dxf,csv,modes};
+return {build,projection,panelProjection,contourSegments,exploded,packing,dxf,csv,modes};
 })();
 </script><script>
 (()=>{

@@ -37,4 +37,19 @@ test("BUG-026 engineering CSV uses decimal commas",()=>{
 const p=E.presets.wardrobe,m=Q.build({type:"wardrobe",w:p[1],h:p[2],d:p[3],n:p[4],t:16,ft:16});
 const lines=Q.csv(m).trim().split("\n").slice(1);a.ok(lines.length);for(const l of lines)a.match(l.split(";").at(-1),/^\d+,\d{5}$/);
 });
+test("BUG-014 DXF exports only parts and separates visible/hidden/dimensions",()=>{
+ for(const type of ["wardrobe","bed","bath"]){
+ const p=E.presets[type],m=Q.build({type,w:p[1],h:p[2],d:p[3],n:p[4],t:16,ft:16});
+ a.equal(m.boxes.filter(b=>b.partIndex>0).length,m.parts.reduce((n,p)=>n+p.qty,0));
+ a.ok(m.boxes.some(b=>!b.partIndex),"visual accessories remain visible in model");
+ for(const mode of ["front","side","top","section"]){
+ const projected=Q.panelProjection(m,mode),ids=new Set(m.boxes.filter(b=>b.partIndex>0).map(b=>b.id));
+ a.ok(projected.rects.every(r=>ids.has(r.id)));
+ const seg=Q.contourSegments(projected.rects);a.equal(new Set(seg.map(s=>[s.x1,s.y1,s.x2,s.y2].join("|"))).size,seg.length);
+ const dxf=Q.dxf(m,mode);a.match(dxf,/VISIBLE/);a.match(dxf,/HIDDEN/);a.match(dxf,/DIMENSIONS/);a.match(dxf,/DASHED/);a.match(dxf,/EOF/);
+ }
+ if(type==="wardrobe"){const seg=Q.contourSegments(Q.panelProjection(m,"front").rects);a.ok(seg.some(s=>s.visible));a.ok(seg.some(s=>!s.visible))}
+ }
+ const seg=Q.contourSegments([{x:0,y:0,w:100,h:100,depth:10},{x:20,y:20,w:60,h:60,depth:0}]);a.equal(seg.filter(s=>s.visible).length,4);a.equal(seg.filter(s=>!s.visible).length,4);
+});
 console.log(n+" engineering core tests PASS");
