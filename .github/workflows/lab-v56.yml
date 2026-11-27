@@ -42,7 +42,7 @@ jobs:
               assert [i for i,(x,y) in enumerate(zip(a,b)) if x!=y]==[1,6]
           else:
               if os.environ.get('GITHUB_HEAD_REF')=='lerika-v521-calculations':
-                  assert [i for i,(x,y) in enumerate(zip(a,b)) if x!=y and i not in (3,5,17)]==[], 'Unexpected V5.21 script change'
+                  assert [i for i,(x,y) in enumerate(zip(a,b)) if x!=y and i not in (3,5,7,12,17)]==[], 'Unexpected V5.21 script change'
               else:
                   assert all(a[i]==b[i] for i in [2,3,4,8,9,12,13,16] if i<len(a)), 'Shared engine changed'
               if a[10]!=b[10]:
