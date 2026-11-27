@@ -28,10 +28,12 @@ jobs:
           curl -fsS --max-time 60 "$BASE/showroom/" -o /tmp/lerika-showroom.html
           grep -Fq 'Корпус (в расчёте)' /tmp/lerika-showroom.html
           grep -Fq 'function panelProjection' /tmp/lerika-showroom.html
-          echo 'PASS: V5.21 showroom markers'
+          grep -Fq 'new Float64Array(W*H)' /tmp/lerika-showroom.html
+          grep -Fq 'function flushSave()' /tmp/lerika-showroom.html
+          echo 'PASS: V5.21 and V5.22 showroom markers'
           check /cabinet/ 200
           check /public/prices 200
           check /public/portfolio 200
           check /api/projects 401
           check /api/client/session 401
-          echo 'PASS: post-V5.21 live deployment read-only smoke; no customer submissions or authenticated writes'
+          echo 'PASS: post-V5.22 live deployment read-only smoke; no customer submissions or authenticated writes'
