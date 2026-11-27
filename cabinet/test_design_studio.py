@@ -193,6 +193,63 @@ class StudioTests(unittest.TestCase):
         for i in range(12):self.assertEqual(self.submit(self.data()).status_code,201)
         self.assertEqual(self.submit(self.data()).status_code,429)
         self.assertEqual(self.submit(self.data(),ip="198.51.100.2").status_code,201)
+    def test_v520_shared_intake_hour_and_day_quotas_per_sender(self):
+        from app import limit_key
+        from unittest.mock import patch
+        ip="198.51.100.1"
+        h={"Origin":ORIGIN,"X-Lerika-Studio":"5.8"}
+        def order(sender):
+            return self.client.post("/api/order-requests",data=self.data(),headers=h,base_url=ORIGIN,content_type="multipart/form-data",environ_overrides={"REMOTE_ADDR":sender})
+        for i in range(6):
+            self.assertEqual(self.submit(self.data(),ip=ip).status_code,201)
+            self.assertEqual(order(ip).status_code,201)
+        self.assertEqual(order(ip).status_code,429)
+        self.assertEqual(self.submit(self.data(),ip="198.51.100.2").status_code,201)
+        with app.test_request_context("/",environ_overrides={"REMOTE_ADDR":ip}):
+            hour=limit_key("intake-hour")
+            day=limit_key("intake-day")
+        # Simulate the remaining daily quota after an hourly window has elapsed.
+        with db() as c:
+            c.execute("DELETE FROM client_limits WHERE action=?",(hour,))
+            c.execute("UPDATE client_limits SET count=40 WHERE action=?",(day,))
+        self.assertEqual(self.submit(self.data(),ip=ip).status_code,429)
+        self.assertEqual(order("198.51.100.2").status_code,201)
+
+    def test_v520_delete_project_isolated_and_confirmed(self):
+        first=self.data();first["files"]=[(io.BytesIO(png()),"one.png")]
+        rid=self.submit(first).json["id"]
+        other=self.submit(self.data()).json["id"]
+        login=self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
+        h={"X-CSRF":login.json["csrf"]}
+        self.assertEqual(self.client.delete("/api/projects/"+rid,json={"confirm":True},base_url=ORIGIN).status_code,403)
+        self.assertEqual(self.client.delete("/api/projects/"+rid,json={"confirm":False},headers=h,base_url=ORIGIN).status_code,400)
+        self.assertEqual(self.client.delete("/api/projects/"+rid,json={"confirm":True},headers=h,base_url=ORIGIN).status_code,200)
+        self.assertEqual(self.client.delete("/api/projects/"+rid,json={"confirm":True},headers=h,base_url=ORIGIN).status_code,404)
+        with db() as c:
+            for table,column in (("projects","id"),("design_requests","id"),("design_briefs","project"),("files","project"),("client_requests","project")):
+                self.assertEqual(c.execute("SELECT COUNT(*) AS n FROM "+table+" WHERE "+column+"=?",(rid,)).fetchone()["n"],0)
+            self.assertIsNotNone(c.execute("SELECT id FROM projects WHERE id=?",(other,)).fetchone())
+
+    def test_v520_client_global_quota_isolated_by_sender(self):
+        from app import limit_key
+        ip="198.51.100.1"
+        h={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        d={"name":"Test","email":"a@example.invalid","password":"long-test-password-123","consent":True}
+        self.assertEqual(self.client.post("/api/client/register",json=d,headers=h,base_url=ORIGIN).status_code,201)
+        # Seed the exhausted per-sender aggregate counter, not a global counter.
+        with app.test_request_context("/",environ_overrides={"REMOTE_ADDR":ip}):
+            key=limit_key("client-login")
+            registration=limit_key("register")
+        import time
+        with db() as c:
+            for k,n in ((key,50),(registration,20)):
+                c.execute("INSERT INTO client_limits VALUES(?,?,?) ON CONFLICT(action) DO UPDATE SET count=excluded.count,since=excluded.since",(k,n,int(time.time())))
+        self.assertEqual(self.client.post("/api/client/login",json=d,headers=h,base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":ip}).status_code,429)
+        self.assertEqual(self.client.post("/api/client/login",json=d,headers=h,base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":"198.51.100.2"}).status_code,200)
+        d["email"]="b@example.invalid"
+        self.assertEqual(self.client.post("/api/client/register",json=d,headers=h,base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":ip}).status_code,429)
+        self.assertEqual(self.client.post("/api/client/register",json=d,headers=h,base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":"198.51.100.2"}).status_code,201)
+
     def test_v520_login_sender_isolation(self):
         for _ in range(8):
             self.assertEqual(self.client.post("/login",json={"password":"wrong"},base_url=ORIGIN,environ_overrides={"REMOTE_ADDR":"198.51.100.1"}).status_code,401)
