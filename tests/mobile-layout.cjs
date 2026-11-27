@@ -9,7 +9,7 @@ await p.goto(base+"#home",{waitUntil:"domcontentloaded"});
 await p.locator(".client-entry-link").waitFor({state:"visible"});
 assert.equal(await p.locator("#light-welcome").isVisible(),true);
 assert.match(await p.locator("#light-welcome").textContent(),/Нажмите на выключатель/);
-assert.ok(await p.locator("#light-welcome").evaluate(el=>el.getBoundingClientRect().bottom<=document.querySelector("#kitchen").getBoundingClientRect().top+1&&el.scrollWidth<=el.clientWidth+1));
+assert.ok(await p.locator("#light-welcome").evaluate(el=>el.getBoundingClientRect().top>=document.querySelector("#kitchen").getBoundingClientRect().bottom-1&&el.getBoundingClientRect().bottom<=document.querySelector(".slogan-zone h1").getBoundingClientRect().top+1&&el.scrollWidth<=el.clientWidth+1));
 await p.locator("#kitchen .switch").click();
 assert.equal(await p.locator("#kitchen .switch").getAttribute("aria-pressed"),"true");
 await p.locator("#kitchen .switch").click();
