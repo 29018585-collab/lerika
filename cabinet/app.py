@@ -1,0 +1,212 @@
+import os, sqlite3, secrets, time, io, json
+from pathlib import Path
+from functools import wraps
+from flask import Flask, request, session, abort, jsonify, render_template, send_file
+from werkzeug.security import check_password_hash
+from PIL import Image, ImageOps
+
+ROOT=Path(os.environ.get("DATA_DIR","/data"))
+ROOT.mkdir(parents=True,exist_ok=True)
+DB=ROOT/"portfolio.sqlite3"
+KEY=os.environ.get("SESSION_SECRET","")
+PASSWORD=os.environ.get("ADMIN_PASSWORD_HASH","")
+if len(KEY)<32 or not PASSWORD.startswith(("scrypt:","pbkdf2:")):
+    raise RuntimeError("Set SESSION_SECRET (32+ random characters) and ADMIN_PASSWORD_HASH")
+app=Flask(__name__)
+app.config.update(SECRET_KEY=KEY,SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SECURE=True,SESSION_COOKIE_SAMESITE="Strict",MAX_CONTENT_LENGTH=16*1024*1024)
+CATEGORIES=["Кухни","Шкафы","Прихожие","Спальни","Детские","Гостиные","Гардеробные","Нестандартные системы хранения"]
+STAGES=["Исходное помещение","Замеры и эскизы","3D-проект","Изготовление","Монтаж","Готовая мебель"]
+ORIGIN="https://29018585-collab.github.io"
+Image.MAX_IMAGE_PIXELS=25000000
+
+def db():
+    c=sqlite3.connect(DB,timeout=10)
+    c.row_factory=sqlite3.Row
+    c.execute("PRAGMA foreign_keys=ON")
+    return c
+with db() as c:
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY, category INTEGER NOT NULL CHECK(category BETWEEN 1 AND 8), title TEXT NOT NULL, description TEXT NOT NULL, stage INTEGER NOT NULL CHECK(stage BETWEEN 1 AND 6), status TEXT NOT NULL CHECK(status IN ('work','ready')), published INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS files(id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id), stage INTEGER NOT NULL CHECK(stage BETWEEN 1 AND 6), name TEXT NOT NULL, mime TEXT NOT NULL, image INTEGER NOT NULL, public INTEGER NOT NULL DEFAULT 0, data BLOB NOT NULL);
+    CREATE TABLE IF NOT EXISTS covers(category INTEGER PRIMARY KEY CHECK(category BETWEEN 1 AND 8), file TEXT NOT NULL REFERENCES files(id));
+    CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY CHECK(id=1), count INTEGER NOT NULL, since INTEGER NOT NULL);
+    """)
+
+@app.after_request
+def headers(r):
+    r.headers["X-Content-Type-Options"]="nosniff"
+    r.headers["Referrer-Policy"]="no-referrer"
+    r.headers["X-Frame-Options"]="DENY"
+    r.headers["Content-Security-Policy"]="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+    r.headers["Cache-Control"]="no-store"
+    if request.path.startswith("/public/"):
+        r.headers["Access-Control-Allow-Origin"]=ORIGIN
+    return r
+
+def admin(f):
+    @wraps(f)
+    def inner(*a,**kw):
+        if not session.get("admin") or time.time()-session.get("login",0)>43200:
+            abort(401)
+        if request.method not in ("GET","HEAD"):
+            if not secrets.compare_digest(request.headers.get("X-CSRF",""),session.get("csrf","!")):
+                abort(403)
+        return f(*a,**kw)
+    return inner
+
+@app.get("/")
+def index():
+    return render_template("admin.html")
+
+@app.get("/health")
+def health():
+    return jsonify(ok=True)
+
+@app.post("/login")
+def login():
+    if not request.is_json: abort(415)
+    password=str((request.json or {}).get("password",""))
+    if len(password)>512: abort(400)
+    now=int(time.time())
+    with db() as c:
+        c.execute("BEGIN IMMEDIATE")
+        row=c.execute("SELECT count,since FROM attempts WHERE id=1").fetchone()
+        count=row["count"] if row and now-row["since"]<900 else 0
+        since=row["since"] if count else now
+        if count>=8: abort(429)
+        if not check_password_hash(PASSWORD,password):
+            c.execute("INSERT OR REPLACE INTO attempts VALUES(1,?,?)",(count+1,since))
+            c.commit()
+            abort(401)
+        c.execute("DELETE FROM attempts WHERE id=1")
+    session.clear()
+    session.update(admin=True,csrf=secrets.token_urlsafe(32),login=now)
+    return jsonify(csrf=session["csrf"])
+
+@app.get("/session")
+@admin
+def get_session():
+    return jsonify(csrf=session["csrf"])
+
+@app.post("/logout")
+@admin
+def logout():
+    session.clear()
+    return jsonify(ok=True)
+
+def project_record(p):
+    data=request.get_json()
+    if not isinstance(data,dict): abort(400)
+    try:
+        cat=int(data["category"]); stage=int(data["stage"])
+        title=data["title"].strip(); desc=data["description"].strip()
+        status=data["status"]; published=data["published"]
+    except (KeyError,ValueError,TypeError,AttributeError): abort(400)
+    if not (1<=cat<=8 and 1<=stage<=6 and 1<=len(title)<=150 and len(desc)<=5000 and status in ("work","ready") and type(published) is bool): abort(400)
+    if status=="ready" and stage!=6: abort(400)
+    return (cat,title,desc,stage,status,int(published),int(time.time()),p)
+
+@app.get("/api/projects")
+@admin
+def projects():
+    with db() as c:
+        rows=[dict(x) for x in c.execute("SELECT * FROM projects ORDER BY updated DESC")]
+        for p in rows:
+            p["files"]=[dict(f) for f in c.execute("SELECT id,stage,name,mime,image,public FROM files WHERE project=? ORDER BY stage,id",(p["id"],))]
+        covers=[dict(x) for x in c.execute("SELECT * FROM covers")]
+    return jsonify(projects=rows,covers=covers,categories=CATEGORIES,stages=STAGES)
+
+@app.post("/api/projects")
+@admin
+def create_project():
+    p=secrets.token_hex(16)
+    rec=project_record(p)
+    # New projects are always drafts, independent of client input.
+    rec=(*rec[:5],0,*rec[6:])
+    with db() as c:
+        c.execute("INSERT INTO projects(category,title,description,stage,status,published,updated,id) VALUES(?,?,?,?,?,?,?,?)",rec)
+    return jsonify(id=p),201
+
+@app.put("/api/projects/<p>")
+@admin
+def edit_project(p):
+    rec=project_record(p)
+    with db() as c:
+        if not c.execute("UPDATE projects SET category=?,title=?,description=?,stage=?,status=?,published=?,updated=? WHERE id=?",rec).rowcount: abort(404)
+        c.execute("DELETE FROM covers WHERE file IN (SELECT id FROM files WHERE project=?) AND category<>?",(p,rec[0]))
+    return jsonify(ok=True)
+
+@app.post("/api/projects/<p>/files")
+@admin
+def upload(p):
+    f=request.files.get("file")
+    try: stage=int(request.form.get("stage","0"))
+    except ValueError: abort(400)
+    if not f or not 1<=stage<=6: abort(400)
+    name=Path(f.filename or "file").name[:160]
+    raw=f.read(12*1024*1024+1)
+    if not raw or len(raw)>12*1024*1024: abort(413)
+    is_image=0; mime="application/octet-stream"
+    # Only decoded, re-encoded raster photos may ever be made public.
+    if Path(name).suffix.lower() in (".jpg",".jpeg",".png",".webp"):
+        try:
+            with Image.open(io.BytesIO(raw)) as im:
+                im=ImageOps.exif_transpose(im).convert("RGB")
+                im.thumbnail((1800,1800))
+                buf=io.BytesIO(); im.save(buf,"JPEG",quality=86,optimize=True)
+                raw=buf.getvalue(); is_image=1; mime="image/jpeg"
+        except Exception: abort(415)
+    with db() as c:
+        if not c.execute("SELECT 1 FROM projects WHERE id=?",(p,)).fetchone(): abort(404)
+        if c.execute("SELECT COALESCE(SUM(length(data)),0) FROM files").fetchone()[0]+len(raw)>500*1024*1024: abort(413)
+        fid=secrets.token_hex(16)
+        c.execute("INSERT INTO files VALUES(?,?,?,?,?,?,0,?)",(fid,p,stage,name,mime,is_image,raw))
+    return jsonify(id=fid),201
+
+@app.put("/api/files/<fid>")
+@admin
+def file_visibility(fid):
+    data=request.get_json()
+    if not isinstance(data,dict) or type(data.get("public")) is not bool: abort(400)
+    with db() as c:
+        f=c.execute("SELECT image FROM files WHERE id=?",(fid,)).fetchone()
+        if not f: abort(404)
+        if data["public"] and not f["image"]: abort(400)
+        c.execute("UPDATE files SET public=? WHERE id=?",(int(data["public"]),fid))
+        if not data["public"]: c.execute("DELETE FROM covers WHERE file=?",(fid,))
+    return jsonify(ok=True)
+
+@app.put("/api/covers/<int:cat>")
+@admin
+def set_cover(cat):
+    data=request.get_json()
+    if not isinstance(data,dict) or not isinstance(data.get("file"),str) or not 1<=cat<=8: abort(400)
+    with db() as c:
+        f=c.execute("SELECT f.id FROM files f JOIN projects p ON p.id=f.project WHERE f.id=? AND f.image=1 AND f.public=1 AND p.published=1 AND p.category=?",(data["file"],cat)).fetchone()
+        if not f: abort(400)
+        c.execute("INSERT OR REPLACE INTO covers VALUES(?,?)",(cat,f["id"]))
+    return jsonify(ok=True)
+
+@app.get("/api/files/<fid>")
+@admin
+def private_file(fid):
+    with db() as c: f=c.execute("SELECT * FROM files WHERE id=?",(fid,)).fetchone()
+    if not f: abort(404)
+    return send_file(io.BytesIO(f["data"]),mimetype=f["mime"],as_attachment=not f["image"],download_name=f["name"])
+
+@app.get("/public/portfolio")
+def public_portfolio():
+    with db() as c:
+        # Drafts and private attachments never leave authenticated endpoints.
+        rows=[dict(p) for p in c.execute("SELECT id,category,title,description,stage,status FROM projects WHERE published=1 ORDER BY updated DESC")]
+        for p in rows:
+            p["photos"]=[dict(f) for f in c.execute("SELECT id,stage FROM files WHERE project=? AND image=1 AND public=1 ORDER BY stage,id",(p["id"],))]
+        covers={str(f["category"]):f["file"] for f in c.execute("SELECT c.* FROM covers c JOIN files f ON f.id=c.file JOIN projects p ON p.id=f.project WHERE f.public=1 AND f.image=1 AND p.published=1 AND p.category=c.category")}
+    return jsonify(projects=rows,covers=covers)
+
+@app.get("/public/photos/<fid>")
+def public_photo(fid):
+    with db() as c:
+        f=c.execute("SELECT f.data FROM files f JOIN projects p ON p.id=f.project WHERE f.id=? AND f.image=1 AND f.public=1 AND p.published=1",(fid,)).fetchone()
+    if not f: abort(404)
+    return send_file(io.BytesIO(f["data"]),mimetype="image/jpeg")
