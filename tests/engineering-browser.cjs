@@ -7,6 +7,37 @@ await page.goto("http://127.0.0.1:"+server.address().port+"/#design-lab/engineer
 await page.locator("#le-view").waitFor({state:"visible"});assert.equal(await page.locator("#le-type option").count(),12);
 assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),"mobile overflow");
 for(const v of ["side","top","section","explode","front"])await page.locator('[data-le-view="'+v+'"]').click();
+
+await page.locator('[data-le-view="explode"]').click();
+await page.locator("#le-component").selectOption("1");
+const oldImage=await page.locator("#le-view").evaluate(c=>c.toDataURL()),oldParts=await page.locator("#le-parts").textContent();
+await page.locator("#le-w").fill("1700");
+assert.match(await page.locator("#le-status").textContent(),/Модель обновлена/);
+assert.equal(await page.locator("#le-component").inputValue(),"1");
+assert.ok(await page.locator("#le-component option").count()>1);
+assert.notEqual(await page.locator("#le-view").evaluate(c=>c.toDataURL()),oldImage);
+assert.notEqual(await page.locator("#le-parts").textContent(),oldParts);
+assert.equal(await page.locator("#le-pdf").isEnabled(),true);
+assert.equal(await page.locator('[data-le-view="explode"]').getAttribute("aria-pressed"),"true");
+await page.locator("#le-w").fill("");
+assert.equal(await page.locator("#le-pdf").isDisabled(),true);
+assert.equal(await page.locator("#le-component").isDisabled(),true);
+assert.equal(await page.locator("#le-view").evaluate(c=>c.liveEdit.pick(600,450)),null);
+await page.locator("#le-w").fill("1800");
+assert.equal(await page.locator("#le-pdf").isEnabled(),true);
+assert.equal(await page.locator("#le-component").isEnabled(),true);
+assert.ok(await page.locator("#le-component option").count()>1);
+for(const [field,value,restore] of [["h","2100","2200"],["d","650","600"],["n","2","3"],["t","18","16"],["ft","22","16"]]){
+const input=page.locator("#le-"+field),before=await page.locator("#le-view").evaluate(c=>c.toDataURL());
+if(["n","t","ft"].includes(field))await input.selectOption(value);else await input.fill(value);
+assert.match(await page.locator("#le-status").textContent(),/Модель обновлена/);
+assert.notEqual(await page.locator("#le-view").evaluate(c=>c.toDataURL()),before,field+" must redraw");
+assert.equal(await page.locator("#le-pdf").isEnabled(),true);
+if(["n","t","ft"].includes(field))await input.selectOption(restore);else await input.fill(restore);
+}
+await page.locator('[data-le-view="front"]').click();
+console.log("PASS automatic redraw of all six geometry fields, selected component, invalid input and recovery");
+
 await page.locator("#le-w").fill("100");assert.equal(await page.locator("#le-pdf").isDisabled(),true);await page.locator("#le-build").click();assert.equal(await page.locator("#le-status").getAttribute("data-state"),"error");
 await page.locator("#le-w").fill("1800");await page.locator("#le-build").click();assert.equal(await page.locator("#le-pdf").isEnabled(),true);
 let promise=page.waitForEvent("download");await page.locator("#le-pdf").click();let d=await promise;assert.equal(d.suggestedFilename(),"LERIKA-Drawings.pdf");let b=fs.readFileSync(await d.path());assert.ok(b.toString("ascii",0,8).startsWith("%PDF"));assert.ok(b.includes(Buffer.from("/Count 5")));
