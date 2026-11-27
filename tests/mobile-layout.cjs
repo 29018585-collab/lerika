@@ -7,6 +7,12 @@ const p=await browser.newPage({viewport:{width,height:844},hasTouch:width<721});
 const base="http://127.0.0.1:"+server.address().port+"/";
 await p.goto(base+"#home",{waitUntil:"domcontentloaded"});
 await p.locator(".client-entry-link").waitFor({state:"visible"});
+const header=await p.evaluate(()=>{const box=s=>document.querySelector(s).getBoundingClientRect();const logo=box("header .header-mirror"),actions=box(".lerika-header-actions"),share=box("#lerika-share"),menu=box(".menu-button");return {logo:logo.width,ratio:logo.width/logo.height,clear:logo.right<=actions.left+1&&share.right<=menu.left+1&&menu.right<=innerWidth+1&&logo.left>=0}});
+assert.equal(header.logo,width<=360?96:width<=650?105:120);
+assert.ok(Math.abs(header.ratio-1.55)<.03,"logo ratio "+width);
+assert.ok(header.clear,"header overlap "+width);
+console.log("PASS larger logo and header controls at "+width+"px");
+
 assert.equal(await p.locator("#client").isVisible(),false);
 assert.equal(await p.locator("#client-form").isVisible(),false);
 await p.locator(".client-entry-link").click();
