@@ -47,6 +47,8 @@ jobs:
                   assert len(b)==len(baseline) and [i for i,(x,y) in enumerate(zip(baseline,b)) if x!=y and i not in (3,5,7,11,14,17)]==[], 'Unexpected V5.22 script change'
               elif os.environ.get('GITHUB_HEAD_REF')=='lerika-v521-calculations':
                   assert [i for i,(x,y) in enumerate(zip(a,b)) if x!=y and i not in (3,5,7,12,17)]==[], 'Unexpected V5.21 script change'
+              elif os.environ.get('GITHUB_HEAD_REF')=='lerika-v523-interface':
+                  assert [i for i,(x,y) in enumerate(zip(a,b)) if x!=y and i not in (6,8,13,14,16,17)]==[], 'Unexpected V5.23 script change'
               else:
                   assert all(a[i]==b[i] for i in [2,3,4,8,9,12,13,16] if i<len(a)), 'Shared engine changed'
               if a[10]!=b[10]:
@@ -122,3 +124,26 @@ jobs:
         working-directory: cabinet
         env:
           LERIKA_QA_POSTGRES: '1'
+
+  image-source-review:
+    if: github.head_ref == 'lerika-v523-interface'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install Pillow==11.3.0
+      - name: Review only existing public portfolio images
+        run: |
+          python - <<'PY'
+          from PIL import Image,ImageOps
+          import base64,io
+          for i,name in enumerate(['Screenshot_20261127_020103_VK.jpg','Screenshot_20261127_030255_Telegram.jpg','Screenshot_20261127_080304_ChatGPT.jpg']):
+              im=ImageOps.exif_transpose(Image.open(name)).convert('RGB')
+              print('SOURCE',i,im.size)
+              im.thumbnail((400,650)); buf=io.BytesIO(); im.save(buf,'JPEG',quality=78)
+              s=base64.b64encode(buf.getvalue()).decode()
+              for start in range(0,len(s),3000): print('THUMB',i,start,s[start:start+3000])
+          PY
