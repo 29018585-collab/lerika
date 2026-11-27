@@ -40,6 +40,6 @@ const results=await p.evaluate(()=>{
  return out;
 });
 assert.equal(results.length,112);for(const q of results){assert.ok(q.visible>0,JSON.stringify(q));assert.equal(q.different,0,JSON.stringify(q))}
-await p.locator("#lab3-type").selectOption("wardrobe");await p.locator("#lab3-shelf-0").fill("7");assert.match(await p.locator("#lab3-sections select").first().locator('option[value="shelves"]').textContent(),/7 полок/);
+await p.locator("#lab3-type").selectOption("wardrobe");await p.locator("#lab3-shelf-0").selectOption("7");assert.match(await p.locator("#lab3-sections select").first().locator('option[value="shelves"]').textContent(),/7 полок/);
 assert.deepEqual(errors,[]);console.log("PASS BUG-004 independent ray-box oracle: 112 views, 0 owner mismatches; BUG-024 dynamic shelf label");
 }finally{await b.close();server.close()}})().catch(e=>{console.error(e);server.close();process.exitCode=1});
