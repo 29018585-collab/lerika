@@ -2,7 +2,7 @@ import os, sqlite3, secrets, time, io, json
 from pathlib import Path
 from functools import wraps
 from flask import Flask, request, session, abort, jsonify, render_template, send_file
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 from PIL import Image, ImageOps
 
 DATABASE_URL=os.environ.get("DATABASE_URL","")
@@ -14,6 +14,12 @@ if not DATABASE_URL:
 DB=ROOT/"portfolio.sqlite3"
 KEY=os.environ.get("SESSION_SECRET","")
 PASSWORD=os.environ.get("ADMIN_PASSWORD_HASH","")
+# Optional password configured directly in the private hosting dashboard.
+# Never put this value in GitHub or client-side code.
+if os.environ.get("ADMIN_PASSWORD"):
+    if len(os.environ["ADMIN_PASSWORD"])<14:
+        raise RuntimeError("ADMIN_PASSWORD must contain at least 14 characters")
+    PASSWORD=generate_password_hash(os.environ["ADMIN_PASSWORD"])
 if len(KEY)<32 or not PASSWORD.startswith(("scrypt:","pbkdf2:")):
     raise RuntimeError("Set SESSION_SECRET (32+ random characters) and ADMIN_PASSWORD_HASH")
 app=Flask(__name__)
