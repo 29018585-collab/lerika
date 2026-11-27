@@ -42,7 +42,7 @@ const panel=async kind=>{await page.locator('[data-lz-panel="'+kind+'"]').tap();
 const closePanel=async()=>{await page.locator("#lz-sheet-close").tap();await page.locator("#lz-sheet").waitFor({state:"hidden"})};
 await panel("material");await page.locator("#lz-field-t").selectOption("18");await page.locator("#lz-field-bodyM").selectOption("МДФ");await page.locator("#lz-field-faceM").selectOption("МДФ эмаль");await page.locator("#lz-field-topM").selectOption("Массив дерева");await page.locator("#lz-sheet-body").getByRole("button",{name:"Применить",exact:true}).tap();assert.match(await page.locator("#lz-sheet-status").textContent(),/применены/);await closePanel();
 assert.equal(await page.locator("#lp-ft").inputValue(),"18");assert.equal(await page.locator("#lp-bodyM").inputValue(),"МДФ");assert.equal(await page.locator("#lp-faceM").inputValue(),"МДФ эмаль");assert.equal(await page.locator("#lp-topM").inputValue(),"Массив дерева");
-await panel("parts");assert.ok(await page.locator(".lz-part-row").count()>0);assert.match(await page.locator("#lz-sheet-body").textContent(),/м²/);
+await panel("parts");assert.ok(await page.locator(".lz-part-row").count()>0);assert.doesNotMatch(await page.locator("#lz-sheet-body").textContent(),/м²/);
 await page.locator("#lz-field-w").fill("1700");await page.locator("#lz-sheet-body").getByRole("button",{name:"Применить размеры"}).click();
 assert.equal(await page.locator("#lp-fw").inputValue(),"1700");
 await page.locator("#lz-field-w").fill("100");await page.locator("#lz-sheet-body").getByRole("button",{name:"Применить размеры"}).click();assert.match(await page.locator("#lz-sheet-status").textContent(),/Недопустимые/);assert.equal(await page.locator("#lp-fw").inputValue(),"1700");await closePanel();
