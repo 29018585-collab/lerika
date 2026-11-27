@@ -476,6 +476,22 @@ class StudioTests(unittest.TestCase):
             self.assertEqual(r.status_code,200)
             self.assertEqual(r.headers["Cache-Control"],"public, max-age=31536000, immutable")
             self.assertEqual(r.data,f.read_bytes())
+        public=sorted(SITE_ROOT.glob("public-*.webp"))
+        self.assertEqual(len(public),14)
+        import hashlib
+        for f in public:
+            r=self.client.get("/showroom/"+f.name)
+            self.assertEqual(r.status_code,200)
+            self.assertEqual(r.headers["Cache-Control"],"public, max-age=31536000, immutable")
+            self.assertEqual(r.mimetype,"image/webp")
+            self.assertLessEqual(len(r.data),200000)
+            self.assertEqual(hashlib.sha256(r.data).hexdigest()[:16],f.stem.rsplit("-",1)[1])
+            with Image.open(io.BytesIO(r.data)) as im:
+                self.assertEqual(im.format,"WEBP")
+                if f.name.startswith("public-kitchen-"):self.assertEqual(im.size,(1080,1400))
+                if f.name.startswith("public-stairs-"):self.assertEqual(im.size,(1080,1020))
+            self.assertTrue(f.name in (SITE_ROOT/"index.html").read_text())
+        self.assertEqual(self.client.get("/showroom/public-unknown-0000000000000000.webp").headers["Cache-Control"],"no-store")
         self.assertLess((SITE_ROOT/"index.html").stat().st_size,500000)
         self.assertEqual(self.client.get("/api/projects").headers["Cache-Control"],"no-store")
 

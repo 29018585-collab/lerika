@@ -150,13 +150,16 @@ def configuration_guard():
         return ('<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ЛериКа · Настройка</title><h1>ЛериКа — личный кабинет</h1><p>Кабинет ожидает завершения защищённой настройки администратором. Вход и загрузка файлов пока недоступны.</p></html>',503,{"Content-Type":"text/html; charset=utf-8"})
     return jsonify(error="Service not configured"),503
 
+def immutable_asset(name):
+    return bool(re.fullmatch(r"(?:scene-(?:lit|unlit)|public-[a-z0-9-]+)-[a-f0-9]{16}\.webp",name))
+
 @app.after_request
 def headers(r):
     r.headers["X-Content-Type-Options"]="nosniff"
     r.headers["Referrer-Policy"]="no-referrer"
     r.headers["X-Frame-Options"]="DENY"
     r.headers.setdefault("Content-Security-Policy","default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; manifest-src 'self'; worker-src 'self'")
-    if not (request.path.startswith("/showroom/") and re.fullmatch(r"/showroom/scene-(?:lit|unlit)-[a-f0-9]{16}\.webp",request.path) and r.status_code in (200,304)):
+    if not (request.path.startswith("/showroom/") and immutable_asset(request.path.removeprefix("/showroom/")) and r.status_code in (200,304)):
         r.headers["Cache-Control"]="no-store"
     if request.path.startswith("/public/"):
         origin=request.headers.get("Origin")
@@ -209,7 +212,7 @@ def site_asset(name, limit):
         abort(404)
     if name.startswith(".") or ".." in name:
         abort(404)
-    if name=="portfolio-api.js" or re.fullmatch(r"scene-(?:lit|unlit)-[a-f0-9]{16}\.webp",name):
+    if name=="portfolio-api.js" or immutable_asset(name):
         local=SITE_ROOT/name
         if not local.is_file() or local.stat().st_size>limit: abort(404)
         return local.read_bytes()
@@ -263,7 +266,7 @@ def showroom_asset(name):
     # SVG is not a trusted inline document: no SVG uploads are exposed here.
     if name.lower().endswith(".svg"): abort(404)
     response=send_file(io.BytesIO(raw),mimetype=mime)
-    if re.fullmatch(r"scene-(?:lit|unlit)-[a-f0-9]{16}\.webp",name):
+    if immutable_asset(name):
         response.headers["Cache-Control"]="public, max-age=31536000, immutable"
     return response
 

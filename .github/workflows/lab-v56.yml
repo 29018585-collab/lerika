@@ -2,7 +2,7 @@ name: Lab V5.6 isolated regression
 on:
   pull_request:
     branches: [lerika-cabinet-v1, lerika-v521-calculations]
-    paths: ['index.html', 'portfolio-api.js', 'scene-*.webp', 'cabinet/**', 'tests/**', '.github/workflows/lab-v56.yml']
+    paths: ['index.html', 'portfolio-api.js', 'scene-*.webp', 'public-*.webp', 'cabinet/**', 'tests/**', '.github/workflows/lab-v56.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -138,5 +138,5 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install Pillow==11.3.0
-      - name: Encode reviewed public images
-        run: python tests/prepare-public-assets.py --group ${{ matrix.group }} --emit
+      - name: Verify reproducible reviewed public images
+        run: python tests/prepare-public-assets.py --group ${{ matrix.group }} --check
