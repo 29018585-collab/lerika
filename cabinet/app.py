@@ -73,7 +73,16 @@ if not SETUP_REQUIRED:
     CREATE TABLE IF NOT EXISTS covers(category INTEGER PRIMARY KEY CHECK(category BETWEEN 1 AND 8), file TEXT NOT NULL REFERENCES files(id));
     CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY CHECK(id=1), count INTEGER NOT NULL, since INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS design_requests(id TEXT PRIMARY KEY, created INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS design_briefs(project TEXT PRIMARY KEY REFERENCES projects(id), brief TEXT NOT NULL);
     """)
+    # Migrate only the initial V5.6 intake records, if any. Preserve the client
+    # brief privately and remove it from the public-facing project metadata.
+    lock(c,82003)
+    legacy=list(c.execute("SELECT p.id,p.title,p.description FROM projects p JOIN design_requests r ON r.id=p.id LEFT JOIN design_briefs b ON b.project=p.id WHERE b.project IS NULL AND p.description LIKE ?",("Заявка из дизайн-студии Lab V5.6\\nКонтакт:%".replace("\\n","\n"),)))
+    for p in legacy:
+        c.execute("INSERT INTO design_briefs VALUES(?,?)",(p["id"],"Название: "+p["title"]+"\n"+p["description"]))
+        c.execute("UPDATE projects SET title=?,description=?,published=0 WHERE id=?",("Заявка · "+p["id"][:6],"Заявка из дизайн-студии ЛериКа",p["id"]))
+        c.execute("DELETE FROM covers WHERE file IN (SELECT id FROM files WHERE project=?)",(p["id"],))
 
 
 @app.before_request
@@ -318,7 +327,7 @@ def design_request():
                 name=Path(name).stem[:150]+".jpg"
         attachments.append((name,mime,image,raw))
     now=int(time.time())
-    description="Заявка из дизайн-студии Lab V5.6\nКонтакт: "+contact+"\n\n"+brief
+    private_brief="Название: "+title+"\nКонтакт: "+contact+"\n\n"+brief
     with db() as c:
         lock(c,82003)
         if c.execute("SELECT id FROM design_requests WHERE id=?",(rid,)).fetchone():
@@ -330,7 +339,8 @@ def design_request():
             abort(429)
         used=c.execute("SELECT COALESCE(SUM(length(data)),0) AS bytes_used FROM files").fetchone()["bytes_used"]
         if used+sum(len(v[3]) for v in attachments)>350*1024*1024: abort(413)
-        c.execute("INSERT INTO projects(category,title,description,stage,status,published,updated,id) VALUES(?,?,?,?,?,?,?,?)",(categories[room],"Заявка · "+title,description,1,"work",0,now,rid))
+        c.execute("INSERT INTO projects(category,title,description,stage,status,published,updated,id) VALUES(?,?,?,?,?,?,?,?)",(categories[room],"Заявка · "+room+" · "+rid[:6],"Заявка из дизайн-студии ЛериКа",1,"work",0,now,rid))
+        c.execute("INSERT INTO design_briefs VALUES(?,?)",(rid,private_brief))
         for name,mime,image,raw in attachments:
             # Attachments (including the collage) are private by default.
             c.execute("INSERT INTO files VALUES(?,?,?,?,?,?,0,?)",(secrets.token_hex(16),rid,1,name,mime,image,raw))
@@ -343,6 +353,8 @@ def projects():
     with db() as c:
         rows=[dict(x) for x in c.execute("SELECT * FROM projects ORDER BY updated DESC")]
         for p in rows:
+            private=c.execute("SELECT brief FROM design_briefs WHERE project=?",(p["id"],)).fetchone()
+            if private: p["private_brief"]=private["brief"]
             p["files"]=[dict(f) for f in c.execute("SELECT id,stage,name,mime,image,public FROM files WHERE project=? ORDER BY stage,id",(p["id"],))]
         covers=[dict(x) for x in c.execute("SELECT * FROM covers")]
     return jsonify(projects=rows,covers=covers,categories=CATEGORIES,stages=STAGES)
