@@ -1,6 +1,6 @@
 "use strict";
 const {chromium}=require("playwright"),assert=require("node:assert/strict"),fs=require("node:fs"),http=require("node:http");
-const html=fs.readFileSync("index.html"),server=http.createServer((req,res)=>{res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(html)});
+const html=fs.readFileSync("index.html"),server=http.createServer((req,res)=>{if(req.url==="/"){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(html)}else{res.writeHead(404);res.end()}});
 (async()=>{await new Promise(r=>server.listen(0,"127.0.0.1",r));const b=await chromium.launch({headless:true});try{
 const p=await b.newPage({viewport:{width:390,height:844}});const errors=[];p.on("pageerror",e=>errors.push(e.message));await p.goto("http://127.0.0.1:"+server.address().port+"/#design-lab/3d");
 const results=await p.evaluate(()=>{
@@ -41,5 +41,5 @@ const results=await p.evaluate(()=>{
 });
 assert.equal(results.length,112);for(const q of results){assert.ok(q.visible>0,JSON.stringify(q));assert.equal(q.different,0,JSON.stringify(q))}
 await p.locator("#lab3-type").selectOption("wardrobe");await p.locator("#lab3-shelf-0").selectOption("7");assert.match(await p.locator("#lab3-sections select").first().locator('option[value="shelves"]').textContent(),/7 полок/);
-assert.deepEqual(errors,[]);console.log("PASS BUG-004 independent ray-box oracle: 112 views, 0 owner mismatches; BUG-024 dynamic shelf label");
+assert.deepEqual(errors,[]);console.log("PASS BUG-004 independent ray-box oracle:",results.length,"views,",results.reduce((n,r)=>n+r.checked+r.ambiguous,0),"pixels,",results.reduce((n,r)=>n+r.different,0),"owner mismatches; BUG-024 dynamic shelf label");
 }finally{await b.close();server.close()}})().catch(e=>{console.error(e);server.close();process.exitCode=1});
