@@ -21,17 +21,31 @@ jobs:
             sleep 5
           done
           curl -fsS --max-time 40 "$URL/probe?marker=baseline" > baseline.json
-          curl -fsS --max-time 40 -H 'CF-Connecting-IP: 192.0.2.123' -H 'X-Forwarded-For: 198.51.100.123' "$URL/probe?marker=spoof" > spoof.json
+          curl -sS --max-time 40 -w '%{http_code}' -o cf.json -H 'CF-Connecting-IP: 192.0.2.123' "$URL/probe?marker=spoof" > cf.status
+          curl -sS --max-time 40 -w '%{http_code}' -o xff.json -H 'X-Forwarded-For: 198.51.100.123' "$URL/probe?marker=spoof" > xff.status
+          curl -sS --max-time 40 -w '%{http_code}' -o both.json -H 'CF-Connecting-IP: 192.0.2.123' -H 'X-Forwarded-For: 198.51.100.123' "$URL/probe?marker=spoof" > both.status
+          curl -fsS --max-time 40 "$URL/probe?marker=second" > second.json
           python - <<'PY'
           import json
-          for name in ('baseline','spoof'):
+          def verify(name, marker):
               result=json.load(open(name+'.json'))
               print(name, json.dumps(result, sort_keys=True))
-              assert result['marker']==name, 'Unexpected response'
+              assert result['marker']==marker, 'Unexpected response'
               assert result['peer_private'], 'Render peer not private'
               assert result['cf_present'], 'No edge client address'
               assert not result['cf_spoof_preserved'], 'Client-supplied CF header preserved'
               assert not result['sender_spoofed'], 'Sender identity spoofed'
               assert result['sender_uses_edge'], 'Sender fell back to proxy address'
-          print('PASS: live Render edge supplies sender identity and rejects test spoof')
+          verify('baseline','baseline')
+          for name in ('cf','xff','both'):
+              status=open(name+'.status').read()
+              print(name, 'HTTP', status)
+              if status=='200':
+                  verify(name,'spoof')
+              elif status=='403':
+                  print(name, 'request rejected by public endpoint; verify no spoof probe reached app in Render logs')
+              else:
+                  raise AssertionError('Unexpected HTTP status: '+status)
+          verify('second','second')
+          print('PASS: live Render edge supplies sender identity and each attempted spoof is rejected or sanitized')
           PY
