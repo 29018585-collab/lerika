@@ -1,9 +1,9 @@
 {
   "id": "/",
-  "name": "ЛериКа · Управление портфолио",
+  "name": "ЛериКа — мебель и личный кабинет",
   "short_name": "ЛериКа",
   "lang": "ru",
-  "start_url": "/",
+  "start_url": "/showroom/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#251a13",
