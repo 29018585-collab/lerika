@@ -163,6 +163,14 @@ class StudioTests(unittest.TestCase):
         stream=io.BytesIO();wb.save(stream);stream.seek(0)
         self.assertEqual(self.client.post("/api/prices",data={"file":(stream,"price.xlsx")},headers=headers,base_url=ORIGIN).status_code,200)
         self.assertEqual(self.client.get("/public/prices",base_url=ORIGIN).json["entries"][0]["price"],1500)
+    def test_cabinet_guides_available(self):
+        admin=self.client.get("/cabinet/",base_url=ORIGIN)
+        self.assertEqual(admin.status_code,200)
+        self.assertIn(b'id="viewGuide"',admin.data)
+        self.assertIn(b'id="guidePane"',admin.data)
+        self.assertEqual(admin.data.count(b'class="guide-lesson"'),7)
+        showroom=self.client.get("/showroom/",base_url=ORIGIN)
+        self.assertIn(b'class="client-guide"',showroom.data)
     def test_duplicate(self):
         d=self.data()
         self.assertEqual(self.submit(d.copy()).status_code,201)
