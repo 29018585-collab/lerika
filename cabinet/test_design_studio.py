@@ -163,6 +163,53 @@ class StudioTests(unittest.TestCase):
         stream=io.BytesIO();wb.save(stream);stream.seek(0)
         self.assertEqual(self.client.post("/api/prices",data={"file":(stream,"price.xlsx")},headers=headers,base_url=ORIGIN).status_code,200)
         self.assertEqual(self.client.get("/public/prices",base_url=ORIGIN).json["entries"][0]["price"],1500)
+    def test_v521_price_import_excel_and_csv_variants(self):
+        from openpyxl import Workbook
+        login=self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
+        headers={"X-CSRF":login.json["csrf"]}
+        def upload(raw,name):
+            return self.client.post("/api/prices",data={"file":(io.BytesIO(raw),name)},headers=headers,base_url=ORIGIN)
+        raw="Комментарий;Материал;Цена;Группа\nзаметка;ЛДСП;1\u00a0234,567;корпус\n;МДФ;;корпус\n;МДФ эмаль;2500;фасады".encode("cp1251")
+        res=upload(raw,"price.csv")
+        self.assertEqual(res.status_code,200,res.get_data(as_text=True))
+        self.assertEqual([x["price"] for x in res.json["entries"]],[1234.57,2500])
+        raw="Группа,Материал,Цена,Комментарий\nкорпус,ЛДСП,1500,тест".encode("cp1251")
+        self.assertEqual(upload(raw,"price.csv").status_code,200)
+        wb=Workbook();ws=wb.active;ws.title="Прайс"
+        ws.append(["Группа","Материал","Цена","Комментарий"])
+        ws.append(["корпус","ЛДСП",1500.125,"тест"])
+        ws.append(["корпус","МДФ",None,"пока нет цены"])
+        ws.append(["фасады","МДФ эмаль","=1000*1.2","формула"])
+        stream=io.BytesIO();wb.save(stream)
+        # openpyxl writes formula cells without caches. Reject that explicitly.
+        rejected=upload(stream.getvalue(),"price.xlsx")
+        self.assertEqual(rejected.status_code,400)
+        self.assertEqual(rejected.json["row"],4)
+        self.assertIn("сохранённого результата",rejected.json["error"])
+        # Simulate the cached value stored by Excel, not formula evaluation.
+        import zipfile
+        cached=io.BytesIO()
+        with zipfile.ZipFile(stream) as src,zipfile.ZipFile(cached,"w",zipfile.ZIP_DEFLATED) as dst:
+            for name in src.namelist():
+                data=src.read(name)
+                if name=="xl/worksheets/sheet1.xml":
+                    import xml.etree.ElementTree as ET
+                    root=ET.fromstring(data)
+                    ns={"s":"http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+                    cell=root.find(".//s:c[@r='C4']",ns)
+                    self.assertEqual(cell.find("s:f",ns).text,"1000*1.2")
+                    cell.find("s:v",ns).text="1200"
+                    data=ET.tostring(root,encoding="utf-8")
+                dst.writestr(name,data)
+        result=upload(cached.getvalue(),"price.xlsx")
+        self.assertEqual(result.status_code,200,result.get_data(as_text=True))
+        self.assertEqual([x["price"] for x in result.json["entries"]],[1500.13,1200])
+        previous=self.client.get("/public/prices",base_url=ORIGIN).json
+        bad=upload("Группа;Материал;Цена\nкорпус;ЛДСП;100\nфасады;неизвестно;200".encode(),"price.csv")
+        self.assertEqual(bad.status_code,400)
+        self.assertEqual(bad.json["row"],3)
+        self.assertEqual(self.client.get("/public/prices",base_url=ORIGIN).json,previous)
+
     def test_cabinet_guides_available(self):
         admin=self.client.get("/cabinet/",base_url=ORIGIN)
         self.assertEqual(admin.status_code,200)

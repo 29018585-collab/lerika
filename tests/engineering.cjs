@@ -15,4 +15,41 @@ for(const s of c.sheets)for(let i=0;i<s.placed.length;i++){const p=s.placed[i];a
 test("invalid size rejected",()=>a.equal(Q.build({type:"wardrobe",w:100,h:2200,d:600,n:3,t:16,ft:16}),null));
 test("packing does not silently omit oversized panel",()=>{const p={id:1,name:"Panel",a:3000,b:1000,qty:2,material:"Корпус",th:16};const c=Q.packing([p],{w:2800,h:2070,margin:10,kerf:4,rotate:true});a.equal(c.oversize.length,2)});
 test("packing separates groups and thicknesses",()=>{const p={id:1,name:"Panel",a:100,b:100,qty:1,material:"Корпус",th:16};a.equal(Q.packing([p,{...p,id:2,th:18},{...p,id:3,material:"Фасад"}],{w:2800,h:2070,margin:10,kerf:4,rotate:false}).sheets.length,3)});
+test("BUG-010 default wardrobe cut respects declared grain and fits all panels",()=>{
+const p=E.presets.wardrobe,m=Q.build({type:"wardrobe",w:p[1],h:p[2],d:p[3],n:p[4],t:16,ft:16});
+for(const rotate of [false,true]){
+ const cut=Q.packing(m.parts,{w:2800,h:2070,margin:10,kerf:4,rotate});
+ a.equal(cut.oversize.length,0);a.equal(cut.sheets.reduce((n,s)=>n+s.placed.length,0),m.parts.reduce((n,p)=>n+p.qty,0));
+ for(const sh of cut.sheets)for(const pos of sh.placed){const p=m.parts.find(p=>p.id===pos.id);if(p.grain==="a")a.equal(pos.rot,false);if(p.grain==="b")a.equal(pos.rot,true)}
+}
+});
+test("BUG-013 invalid construction and fractional dimensions are rejected",()=>{
+const m={type:"kitchen",w:300,h:400,d:250,n:1,t:18,ft:18,construction:{foot:200,top:"double",shelves:[8,8,8,8]}};
+a.equal(E.build(m),null);a.equal(E.valid(m),false);
+const p=E.presets.wardrobe,base={type:"wardrobe",w:p[1],h:p[2],d:p[3],n:p[4],t:16,ft:16};
+a.equal(E.valid(base),true);a.equal(E.valid({...base,w:1800.5}),false);
+for(const [type,p] of Object.entries(E.presets))for(const foot of [0,100,200])for(const top of ["inset","overlay","double"])for(const count of [0,4,8]){
+ const x={type,w:p[1],h:p[2],d:p[3],n:p[4],t:16,ft:16,construction:{foot,top,shelves:[count,count,count,count]}};
+ a.equal(E.valid(x),!!E.build(x));
+}
+});
+test("BUG-026 engineering CSV uses decimal commas",()=>{
+const p=E.presets.wardrobe,m=Q.build({type:"wardrobe",w:p[1],h:p[2],d:p[3],n:p[4],t:16,ft:16});
+const lines=Q.csv(m).trim().split("\n").slice(1);a.ok(lines.length);for(const l of lines)a.match(l.split(";").at(-1),/^\d+,\d{5}$/);
+});
+test("BUG-014 DXF exports only parts and separates visible/hidden/dimensions",()=>{
+ for(const type of ["wardrobe","bed","bath"]){
+ const p=E.presets[type],m=Q.build({type,w:p[1],h:p[2],d:p[3],n:p[4],t:16,ft:16});
+ a.equal(m.boxes.filter(b=>b.partIndex>0).length,m.parts.reduce((n,p)=>n+p.qty,0));
+ a.ok(m.boxes.some(b=>!b.partIndex),"visual accessories remain visible in model");
+ for(const mode of ["front","side","top","section"]){
+ const projected=Q.panelProjection(m,mode),ids=new Set(m.boxes.filter(b=>b.partIndex>0).map(b=>b.id));
+ a.ok(projected.rects.every(r=>ids.has(r.id)));
+ const seg=Q.contourSegments(projected.rects);a.equal(new Set(seg.map(s=>[s.x1,s.y1,s.x2,s.y2].join("|"))).size,seg.length);
+ const dxf=Q.dxf(m,mode);a.match(dxf,/VISIBLE/);a.match(dxf,/HIDDEN/);a.match(dxf,/DIMENSIONS/);a.match(dxf,/DASHED/);a.match(dxf,/EOF/);
+ }
+ if(type==="wardrobe"){const seg=Q.contourSegments(Q.panelProjection(m,"front").rects);a.ok(seg.some(s=>s.visible));a.ok(seg.some(s=>!s.visible))}
+ }
+ const seg=Q.contourSegments([{x:0,y:0,w:100,h:100,depth:10},{x:20,y:20,w:60,h:60,depth:0}]);a.equal(seg.filter(s=>s.visible).length,4);a.equal(seg.filter(s=>!s.visible).length,4);
+});
 console.log(n+" engineering core tests PASS");

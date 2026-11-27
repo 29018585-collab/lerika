@@ -1,5 +1,5 @@
 import os, sqlite3, secrets, time, io, json, re, hashlib, base64, mimetypes, csv, zipfile, hmac, ipaddress
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.request import urlopen, Request
 from urllib.parse import quote
 from threading import Lock
@@ -381,12 +381,20 @@ PRICE_MATERIALS={
     "корпус":["ЛДСП","МДФ","Фанера","Мебельный щит","Массив дерева"],
     "фасады":["ЛДСП","МДФ плёнка ПВХ","МДФ эмаль","МДФ акрил","МДФ пластик HPL","МДФ шпон","Фанера","Массив дерева","Стекло (визуальный аналог)"]
 }
+class PriceImportError(ValueError):
+    def __init__(self,row,message):
+        super().__init__(message)
+        self.row=row
+
 def price_rows(file):
     raw=file.read(2*1024*1024+1)
     if not raw or len(raw)>2*1024*1024: abort(413)
     name=(file.filename or "").lower()
+    formulas=set()
     if name.endswith(".csv"):
-        content=raw.decode("utf-8-sig")
+        try: content=raw.decode("utf-8-sig")
+        except UnicodeDecodeError: content=raw.decode("cp1251")
+        if not content.strip(): raise PriceImportError(1,"Пустой файл")
         delimiter=";" if ";" in content.splitlines()[0] else ","
         rows=list(csv.reader(io.StringIO(content),delimiter=delimiter))
     elif name.endswith(".xlsx"):
@@ -394,28 +402,59 @@ def price_rows(file):
         with zipfile.ZipFile(io.BytesIO(raw)) as z:
             if len(z.infolist())>100 or sum(x.file_size for x in z.infolist())>20*1024*1024: abort(413)
             if any(x.flag_bits&1 for x in z.infolist()): abort(400)
-        wb=load_workbook(io.BytesIO(raw),read_only=True,data_only=False,keep_links=False)
+        wb=load_workbook(io.BytesIO(raw),read_only=True,data_only=True,keep_links=False)
         try:
             ws=wb["Прайс"] if "Прайс" in wb.sheetnames else wb.active
-            if (ws.max_row and ws.max_row>200) or (ws.max_column and ws.max_column>3): abort(400)
-            rows=list(ws.iter_rows(min_row=1,max_row=200,max_col=3,values_only=True))
+            if (ws.max_row and ws.max_row>200) or (ws.max_column and ws.max_column>50):
+                raise PriceImportError(1,"Допустимо до 200 строк и 50 столбцов")
+            # Bound actual iteration even if worksheet dimension metadata is absent.
+            rows=list(ws.iter_rows(min_row=1,max_row=201,max_col=51,values_only=True))
+            if (len(rows)>200 and any(x is not None for x in rows[200])) or any(len(row)>50 and row[50] is not None for row in rows):
+                raise PriceImportError(1,"Допустимо до 200 строк и 50 столбцов")
+            rows=[row[:50] for row in rows[:200]]
+            # Cached Excel values are read without executing formulas. A missing
+            # cache must not be mistaken for an intentionally blank price.
+            source=load_workbook(io.BytesIO(raw),read_only=True,data_only=False,keep_links=False)
+            try:
+                for ri,row in enumerate(source[ws.title].iter_rows(min_row=1,max_row=200,max_col=50),1):
+                    for ci,cell in enumerate(row):
+                        if cell.data_type=="f": formulas.add((ri,ci))
+            finally: source.close()
         finally: wb.close()
     else: abort(415)
-    if not rows or len(rows)>200 or [str(x or "").strip().casefold() for x in rows[0]]!=["группа","материал","цена"]: abort(400)
+    if not rows or len(rows)>200 or any(len(row)>50 for row in rows):
+        raise PriceImportError(1,"Допустимо до 200 строк и 50 столбцов")
+    def norm(value):
+        return " ".join(str(value if value is not None else "").split())
+    header=[norm(x).casefold() for x in rows[0]]
+    required=("группа","материал","цена")
+    if any(header.count(k)!=1 for k in required):
+        raise PriceImportError(1,"Нужны уникальные столбцы «Группа», «Материал», «Цена»")
+    gi,mi,vi=(header.index(k) for k in required)
     entries=[];seen=set()
-    for row in rows[1:]:
-        if not any(x is not None and str(x).strip() for x in row): continue
-        if len(row)!=3: abort(400)
-        group,material,value=row
-        group=str(group).strip().casefold();material=str(material).strip()
+    for ri,row in enumerate(rows[1:],2):
+        def at(i): return row[i] if i<len(row) else None
+        group,material,value=norm(at(gi)).casefold(),norm(at(mi)),at(vi)
+        if not norm(value):
+            if (ri,vi) in formulas:
+                raise PriceImportError(ri,"Формула цены не имеет сохранённого результата. Пересчитайте и сохраните файл в Excel")
+            continue
         match=next((x for x in PRICE_MATERIALS.get(group,[]) if x.casefold()==material.casefold()),None)
-        if not match or (group,match) in seen: abort(400)
-        try: price=Decimal(str(value).replace(" ","").replace(",","."))
-        except InvalidOperation: abort(400)
-        if not price.is_finite() or not (0<price<=1000000) or price.as_tuple().exponent < -2: abort(400)
+        if not match: raise PriceImportError(ri,"Неизвестная группа или материал")
+        if (group,match) in seen: raise PriceImportError(ri,"Повторяющаяся ставка")
+        try:
+            if isinstance(value,bool): raise InvalidOperation
+            cleaned="".join(str(value).split()).replace(",",".")
+            if len(cleaned)>50: raise InvalidOperation
+            price=Decimal(cleaned)
+            if not price.is_finite() or not (0<price<=1000000): raise InvalidOperation
+            price=price.quantize(Decimal("0.01"),rounding=ROUND_HALF_UP)
+            if price<=0: raise InvalidOperation
+        except InvalidOperation:
+            raise PriceImportError(ri,"Цена должна быть положительным числом до 1 000 000 ₽")
         entries.append(dict(group=group,material=match,price=float(price)))
         seen.add((group,match))
-    if not entries: abort(400)
+    if not entries: raise PriceImportError(1,"Нет заполненных ставок")
     return entries
 
 @app.get("/public/prices")
@@ -429,7 +468,8 @@ def upload_prices():
     f=request.files.get("file")
     if not f: abort(400)
     try: entries=price_rows(f)
-    except (ValueError,TypeError,IndexError,KeyError,zipfile.BadZipFile,UnicodeError): abort(400)
+    except PriceImportError as e: return jsonify(error="Строка "+str(e.row)+": "+str(e),row=e.row),400
+    except (ValueError,TypeError,IndexError,KeyError,zipfile.BadZipFile,UnicodeError): return jsonify(error="Не удалось прочитать прайс. Проверьте формат CSV/XLSX"),400
     now=int(time.time())
     with db() as c:
         lock(c,82007)
