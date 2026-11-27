@@ -68,6 +68,11 @@ jobs:
       - name: Engineering geometry tests
         if: ${{ hashFiles('tests/engineering.cjs') != '' }}
         run: node tests/engineering.cjs
+      - name: Independent CAD parser interoperability
+        if: ${{ hashFiles('tests/dxf-interop.py') != '' }}
+        run: |
+          pip install ezdxf==1.4.3
+          python tests/dxf-interop.py
       - name: Engineering mobile browser tests
         if: ${{ hashFiles('tests/engineering-browser.cjs') != '' }}
         run: node tests/engineering-browser.cjs

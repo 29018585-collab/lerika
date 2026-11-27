@@ -1007,7 +1007,7 @@ for(const r of rects)for(const edge of [{axis:"x",fixed:r.y,lo:r.x,hi:r.x+r.w},{
 return [...segments.values()];
 }
 function dxf(model,mode,cut){
-const p=panelProjection(model,mode,cut),out=["0","SECTION","2","HEADER","9","$ACADVER","1","AC1015","9","$INSUNITS","70","4","0","ENDSEC","0","SECTION","2","TABLES","0","TABLE","2","LTYPE","70","2","0","LTYPE","2","CONTINUOUS","70","0","3","Solid line","72","65","73","0","40","0","0","LTYPE","2","DASHED","70","0","3","Hidden dash","72","65","73","2","40","12","49","8","74","0","49","-4","74","0","0","ENDTAB","0","TABLE","2","LAYER","70","3"];
+const p=panelProjection(model,mode,cut),out=["0","SECTION","2","HEADER","9","$ACADVER","1","AC1015","9","$INSUNITS","70","4","0","ENDSEC","0","SECTION","2","TABLES","0","TABLE","2","LTYPE","5","10","70","2","0","LTYPE","2","CONTINUOUS","70","0","3","Solid line","72","65","73","0","40","0","0","LTYPE","2","DASHED","70","0","3","Hidden dash","72","65","73","2","40","12","49","8","74","0","49","-4","74","0","0","ENDTAB","0","TABLE","2","LAYER","5","20","70","3"];
 for(const [name,color,lineType] of [["VISIBLE",7,"CONTINUOUS"],["HIDDEN",8,"DASHED"],["DIMENSIONS",3,"CONTINUOUS"]])out.push("0","LAYER","2",name,"70","0","62",String(color),"6",lineType);
 out.push("0","ENDTAB","0","ENDSEC","0","SECTION","2","ENTITIES");
 const num=v=>String(Math.round(v*1e6)/1e6),line=(layer,x,y,a,b)=>out.push("0","LINE","8",layer,"10",num(x),"20",num(p.h-y),"30","0","11",num(a),"21",num(p.h-b),"31","0");
