@@ -41,14 +41,17 @@ jobs:
           elif len(b)==len(a)+2:
               assert [i for i,(x,y) in enumerate(zip(a,b)) if x!=y]==[1,6]
           else:
-              assert all(a[i]==b[i] for i in [2,3,4,5,8,9,10] if i<len(a)), 'Shared engine changed'
+              assert all(a[i]==b[i] for i in [2,3,4,8,9,12,13,16] if i<len(a)), 'Shared engine changed'
+              if a[10]!=b[10]:
+                  restored=b[10].replace('handle:item.handle||"brass",config:item.config','handle:"brass"').replace(',textureRotation:item.rot','')
+                  assert restored==a[10], 'Unexpected room model change'
           assert 'id="lab-ai-generate"' not in new
           with tempfile.TemporaryDirectory() as td:
               for i,js in enumerate(b):
                   if not js.strip():continue
                   p=pathlib.Path(td)/f'{i}.js';p.write_text(js)
                   subprocess.run(['node','--check',str(p)],check=True)
-          print('Furniture engine and other non-studio scripts unchanged; JS syntax OK')
+          print('Furniture and engineering engines protected; room adapter changes checked; JS syntax OK')
           PY
       - name: Room planner core tests
         if: ${{ hashFiles('tests/room-planner.cjs') != '' }}
@@ -73,3 +76,6 @@ jobs:
       - name: Drawing zoom browser regression
         if: ${{ hashFiles('tests/zoom-viewer.cjs') != '' }}
         run: node tests/zoom-viewer.cjs
+
+      - name: Unified project and estimate browser regression
+        run: node tests/unified-project-browser.cjs

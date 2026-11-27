@@ -40,7 +40,7 @@ assert.equal(await p.locator("#le-component").inputValue(),String(target.id),"se
 assert.ok((await p.locator("#le-view").evaluate(c=>c.toDataURL()))===assembled,"reset restores initial exploded arrangement");
 await p.locator("#lz-close").click();
 console.log("PASS live exploded component touch, reset, immutable quantities");
-await p.locator("#lz-open-le-cut-view").click();await p.locator("#lz-dialog").waitFor({state:"visible"});await p.keyboard.press("Escape");await p.locator("#lz-dialog").waitFor({state:"hidden"});
+await p.evaluate(()=>location.hash="#design-lab/cut");await p.locator("#le-cut-card").waitFor({state:"visible"});await p.locator("#lz-open-le-cut-view").click();await p.locator("#lz-dialog").waitFor({state:"visible"});await p.keyboard.press("Escape");await p.locator("#lz-dialog").waitFor({state:"hidden"});
 await p.evaluate(()=>location.hash="#design-lab/plan");await p.locator("#lab-plan-panel").waitFor({state:"visible"});await p.locator("#lp-view").click();assert.equal(await p.locator("#lz-dialog").isVisible(),false);await p.locator("#lz-open-lp-view").click();await p.locator("#lz-dialog").waitFor({state:"visible"});await p.locator("#lz-close").click();
 await p.evaluate(()=>location.hash="#design-lab/3d");await p.locator("#lab-3d-panel").waitFor({state:"visible"});
 await p.locator("#lab3-explode").click();await p.locator("#le-panel").waitFor({state:"visible"});
