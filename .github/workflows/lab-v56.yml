@@ -79,3 +79,31 @@ jobs:
 
       - name: Unified project and estimate browser regression
         run: node tests/unified-project-browser.cjs
+  postgres-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: lerika_qa
+          POSTGRES_PASSWORD: lerika_qa
+          POSTGRES_DB: lerika_qa
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lerika_qa -d lerika_qa"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r cabinet/requirements.txt
+      - name: Security regressions on disposable PostgreSQL 17
+        run: python -m unittest -v test_design_studio
+        working-directory: cabinet
+        env:
+          LERIKA_QA_POSTGRES: '1'

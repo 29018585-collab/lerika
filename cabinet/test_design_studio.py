@@ -4,7 +4,10 @@ from pathlib import Path
 from PIL import Image
 tmp=tempfile.TemporaryDirectory()
 os.environ.pop("RENDER",None)
-os.environ["DATABASE_URL"]=""
+# The QA PostgreSQL target is intentionally fixed to a disposable local CI service.
+# Never accept a production DATABASE_URL in this destructive test suite.
+QA_POSTGRES=os.environ.get("LERIKA_QA_POSTGRES")=="1"
+os.environ["DATABASE_URL"]="postgresql://lerika_qa:lerika_qa@127.0.0.1:5432/lerika_qa" if QA_POSTGRES else ""
 os.environ["DATA_DIR"]=tmp.name
 os.environ["SESSION_SECRET"]="local-test-secret-not-for-production-12345"
 os.environ["ADMIN_PASSWORD"]="local-test-password-only"
@@ -280,6 +283,20 @@ class StudioTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/client/session",base_url=ORIGIN).status_code,401)
         self.assertEqual(self.client.get("/session",base_url=ORIGIN).status_code,200)
 
+    @unittest.skipUnless(QA_POSTGRES,"PostgreSQL-only connection check")
+    def test_v520_postgres_connections_close_on_success_and_exception(self):
+        with db() as c:
+            self.assertEqual(c.execute("SELECT 1 AS n").fetchone()["n"],1)
+        self.assertTrue(c.conn.closed)
+        with self.assertRaisesRegex(RuntimeError,"rollback probe"):
+            with db() as c:
+                c.execute("INSERT INTO client_limits VALUES(?,?,?)",("qa-rollback",1,1))
+                raise RuntimeError("rollback probe")
+        self.assertTrue(c.conn.closed)
+        with db() as check:
+            self.assertIsNone(check.execute("SELECT action FROM client_limits WHERE action=?",("qa-rollback",)).fetchone())
+
+    @unittest.skipIf(QA_POSTGRES,"SQLite-only connection check")
     def test_v520_sqlite_connections_close_on_success_and_exception(self):
         import sqlite3
         with db() as c:
