@@ -19,3 +19,8 @@ Run python -m unittest -v test_privacy from cabinet; node --check static/admin.j
 
 ## Not yet deployed
 No Railway service, domain, credentials, persistent volume or production API has been provisioned. No login URL is currently active. No live publication from cabinet until deployment and configuration.
+
+## V1.1 — Render + Neon alternative (27 November 2026)
+Railway denied creation due to Free plan resource provisioning limit. Separate Neon project LERIKA Cabinet (tiny-water-21811246) created in the existing Free organization, Frankfurt region, database lerika. No existing database modified. Render has not been connected or deployed.
+
+Use the render.yaml blueprint on branch lerika-cabinet-v1 with plan free. Configure DATABASE_URL as the TLS-enabled connection URI of the dedicated Neon database and ADMIN_PASSWORD_HASH as a Werkzeug password hash. The blueprint generates SESSION_SECRET. Do not copy secret values into GitHub files. PostgreSQL is mandatory on Render; startup fails if DATABASE_URL is absent. Maximum uploaded data 350 MiB, individual files 12 MiB; reserve space for database overhead. On free hosting the server may sleep and the first request can be delayed. No paid plan upgrade is authorized by this document. Test with synthetic data only; review backup and privacy requirements before storing real client documents. Existing public website remains available even when the API is unreachable.
