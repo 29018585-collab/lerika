@@ -1,0 +1,28 @@
+"use strict";
+const {chromium}=require("playwright"),assert=require("node:assert/strict"),fs=require("node:fs"),http=require("node:http");
+const html=fs.readFileSync("index.html"),server=http.createServer((req,res)=>{if(req.url==="/"){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(html)}else{res.writeHead(404);res.end()}});
+(async()=>{await new Promise(r=>server.listen(0,"127.0.0.1",r));const b=await chromium.launch({headless:true});try{
+const p=await b.newPage({viewport:{width:384,height:800},hasTouch:true,deviceScaleFactor:2});const errors=[];p.on("pageerror",e=>errors.push(e.message));
+const url="http://127.0.0.1:"+server.address().port+"/#design-lab/";
+await p.goto(url+"engineering",{waitUntil:"domcontentloaded"});
+await p.locator('[data-le-view="explode"]').click();await p.locator("#le-component").selectOption("1");
+await p.locator("#le-view").click();await p.locator("#lz-dialog").waitFor({state:"visible"});assert.match(await p.locator("#lz-foot").textContent(),/300%/);
+assert.ok(await p.locator("#lz-stage").evaluate(e=>e.clientHeight>400&&e.clientWidth>=370));
+await p.locator("#lz-reset").click();assert.match(await p.locator("#lz-foot").textContent(),/100%/);
+await p.locator("#lz-plus").click();assert.match(await p.locator("#lz-foot").textContent(),/135%/);
+await p.locator("#lz-minus").click();assert.match(await p.locator("#lz-foot").textContent(),/100%/);
+const r=await p.locator("#lz-stage").boundingBox(),x=r.x+r.width/2,y=r.y+r.height/2;
+await p.mouse.dblclick(x,y);assert.match(await p.locator("#lz-foot").textContent(),/200%/);
+await p.mouse.move(x,y);await p.mouse.wheel(0,-150);await p.waitForTimeout(100);assert.ok(parseInt((await p.locator("#lz-foot").textContent()).match(/\d+%/)[0])>200);
+await p.mouse.move(x,y);await p.mouse.down();await p.mouse.move(x+55,y+30,{steps:5});await p.mouse.up();
+await p.locator("#lz-reset").click();
+const cdp=await p.context().newCDPSession(p);
+await cdp.send("Input.dispatchTouchEvent",{type:"touchStart",touchPoints:[{x:x-30,y,id:1},{x:x+30,y,id:2}]});
+await cdp.send("Input.dispatchTouchEvent",{type:"touchMove",touchPoints:[{x:x-65,y,id:1},{x:x+65,y,id:2}]});
+await cdp.send("Input.dispatchTouchEvent",{type:"touchEnd",touchPoints:[]});
+assert.ok(parseInt((await p.locator("#lz-foot").textContent()).match(/\d+%/)[0])>150,"pinch must zoom");
+await p.locator("#lz-close").click();await p.locator("#lz-dialog").waitFor({state:"hidden"});
+await p.locator("#lz-open-le-cut-view").click();await p.locator("#lz-dialog").waitFor({state:"visible"});await p.keyboard.press("Escape");await p.locator("#lz-dialog").waitFor({state:"hidden"});
+await p.evaluate(()=>location.hash="#design-lab/plan");await p.locator("#lab-plan-panel").waitFor({state:"visible"});await p.locator("#lp-view").click();assert.equal(await p.locator("#lz-dialog").isVisible(),false);await p.locator("#lz-open-lp-view").click();await p.locator("#lz-dialog").waitFor({state:"visible"});await p.locator("#lz-close").click();
+assert.deepEqual(errors,[]);console.log("PASS zoom buttons, focus, double tap, wheel, pinch, pan, close, planner edit safety");
+}finally{await b.close();server.close()}})().catch(e=>{console.error(e);server.close();process.exitCode=1});
