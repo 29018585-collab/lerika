@@ -2,7 +2,7 @@ name: Lab V5.6 isolated regression
 on:
   pull_request:
     branches: [lerika-cabinet-v1]
-    paths: ['index.html', 'cabinet/**', '.github/workflows/lab-v56.yml']
+    paths: ['index.html', 'cabinet/**', 'tests/**', '.github/workflows/lab-v56.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -28,8 +28,15 @@ jobs:
           old=subprocess.check_output(['git','show','origin/lerika-cabinet-v1:index.html'],text=True)
           def scripts(s):return re.findall(r'<script\b[^>]*>([\s\S]*?)</script>',s,re.I)
           a,b=scripts(old),scripts(new)
-          assert len(a)==len(b)
-          assert sum(x!=y for x,y in zip(a,b))<=1, 'Unrelated scripts changed'
+          assert len(b) in (len(a),len(a)+2)
+          if len(b)==len(a)+2:
+              assert [i for i,(x,y) in enumerate(zip(a,b)) if x!=y]==[1,6], 'Unexpected original script change'
+              # Only extend route matching; protect the existing studio logic too.
+              assert b[1].replace('3d|ai|config|plan','3d|ai|config')==a[1]
+              old_studio=b[6].replace('3d|ai|config|plan','3d|ai|config').replace(',"plan":"04 / Планировщик помещения"','').replace(';document.getElementById("lab-plan-panel").hidden=key!=="plan"','')
+              assert old_studio==a[6]
+          else:
+              assert sum(x!=y for x,y in zip(a,b))<=1, 'Unrelated scripts changed'
           assert 'id="lab-ai-generate"' not in new
           with tempfile.TemporaryDirectory() as td:
               for i,js in enumerate(b):
@@ -38,3 +45,12 @@ jobs:
                   subprocess.run(['node','--check',str(p)],check=True)
           print('Furniture engine and other non-studio scripts unchanged; JS syntax OK')
           PY
+      - name: Room planner core tests
+        if: ${{ hashFiles('tests/room-planner.cjs') != '' }}
+        run: node tests/room-planner.cjs
+      - name: Room planner mobile browser tests
+        if: ${{ hashFiles('tests/room-planner-browser.cjs') != '' }}
+        run: |
+          npm install --no-save playwright
+          npx playwright install chromium
+          node tests/room-planner-browser.cjs
