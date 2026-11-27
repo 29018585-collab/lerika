@@ -91,6 +91,23 @@ def lock(c,key):
     else:
         c.execute("BEGIN IMMEDIATE")
 
+def request_number(n):
+    return "L-"+str(n).zfill(6)
+def existing_number(c,rid):
+    row=c.execute("SELECT number FROM request_numbers WHERE request_id=?",(rid,)).fetchone()
+    return request_number(row["number"]) if row else None
+def allocate_number(c,rid):
+    # Call only while holding intake/migration lock 82003. Counter never decreases.
+    old=existing_number(c,rid)
+    if old: return old
+    c.execute("UPDATE request_sequence SET last_number=last_number+1 WHERE id=1")
+    n=c.execute("SELECT last_number FROM request_sequence WHERE id=1").fetchone()["last_number"]
+    c.execute("INSERT INTO request_numbers(number,request_id) VALUES(?,?)",(n,rid))
+    return request_number(n)
+def migrate_request_numbers(c):
+    for row in c.execute("SELECT d.id FROM design_requests d LEFT JOIN request_numbers n ON n.request_id=d.id WHERE n.request_id IS NULL ORDER BY d.created,d.id").fetchall():
+        allocate_number(c,row["id"])
+
 if not SETUP_REQUIRED:
   with db() as c:
     lock(c,82001)
@@ -100,6 +117,8 @@ if not SETUP_REQUIRED:
     CREATE TABLE IF NOT EXISTS covers(category INTEGER PRIMARY KEY CHECK(category BETWEEN 1 AND 8), file TEXT NOT NULL REFERENCES files(id));
     CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY CHECK(id=1), count INTEGER NOT NULL, since INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS design_requests(id TEXT PRIMARY KEY, created INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS request_numbers(number INTEGER PRIMARY KEY, request_id TEXT NOT NULL UNIQUE REFERENCES design_requests(id));
+    CREATE TABLE IF NOT EXISTS request_sequence(id INTEGER PRIMARY KEY CHECK(id=1), last_number INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS design_briefs(project TEXT PRIMARY KEY REFERENCES projects(id), brief TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS clients(id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, password_hash TEXT NOT NULL, created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS client_requests(project TEXT PRIMARY KEY REFERENCES projects(id), client TEXT NOT NULL REFERENCES clients(id));
@@ -109,6 +128,8 @@ if not SETUP_REQUIRED:
     # Migrate only the initial V5.6 intake records, if any. Preserve the client
     # brief privately and remove it from the public-facing project metadata.
     lock(c,82003)
+    c.execute("INSERT INTO request_sequence VALUES(1,0) ON CONFLICT(id) DO NOTHING")
+    migrate_request_numbers(c)
     legacy=list(c.execute("SELECT p.id,p.title,p.description FROM projects p JOIN design_requests r ON r.id=p.id LEFT JOIN design_briefs b ON b.project=p.id WHERE b.project IS NULL AND p.description LIKE ?",("Заявка из дизайн-студии Lab V5.6\\nКонтакт:%".replace("\\n","\n"),)))
     for p in legacy:
         c.execute("INSERT INTO design_briefs VALUES(?,?)",(p["id"],"Название: "+p["title"]+"\n"+p["description"]))
@@ -400,7 +421,9 @@ def client_session():
     with db() as c:
         row=c.execute("SELECT name,email FROM clients WHERE id=?",(cid,)).fetchone()
         if not row: abort(401)
-        orders=[dict(x) for x in c.execute("SELECT p.id,p.title,p.stage,p.status,r.created FROM client_requests cr JOIN projects p ON p.id=cr.project JOIN design_requests r ON r.id=p.id WHERE cr.client=? ORDER BY r.created DESC",(cid,))]
+        orders=[dict(x) for x in c.execute("SELECT p.id,p.title,p.stage,p.status,r.created,n.number FROM client_requests cr JOIN projects p ON p.id=cr.project JOIN design_requests r ON r.id=p.id LEFT JOIN request_numbers n ON n.request_id=r.id WHERE cr.client=? ORDER BY r.created DESC",(cid,))]
+    for order in orders:
+        order["number"]=request_number(order["number"]) if order["number"] is not None else order["id"][:12]
     return jsonify(name=row["name"],email=row["email"],orders=orders)
 
 @app.get("/api/clients")
@@ -544,7 +567,7 @@ def design_request():
     # A random request ID makes network retries idempotent.
     with db() as c:
         if c.execute("SELECT id FROM design_requests WHERE id=?",(rid,)).fetchone():
-            return jsonify(id=rid),200
+            return jsonify(id=rid,number=existing_number(c,rid)),200
     reserve_limits([(limit_key("intake-hour"),12,3600),(limit_key("intake-day"),40,86400)])
     files=request.files.getlist("files")
     collages=request.files.getlist("collage")
@@ -603,7 +626,7 @@ def design_request():
     with db() as c:
         lock(c,82003)
         if c.execute("SELECT id FROM design_requests WHERE id=?",(rid,)).fetchone():
-            return jsonify(id=rid),200
+            return jsonify(id=rid,number=existing_number(c,rid)),200
         # Sender limits were reserved before attachment processing; retain the storage cap.
         used=c.execute("SELECT COALESCE(SUM(length(data)),0) AS bytes_used FROM files").fetchone()["bytes_used"]
         if used+sum(len(v[3]) for v in attachments)>350*1024*1024: abort(413)
@@ -613,10 +636,12 @@ def design_request():
             # Attachments (including the collage) are private by default.
             c.execute("INSERT INTO files VALUES(?,?,?,?,?,?,0,?)",(secrets.token_hex(16),rid,1,name,mime,image,raw))
         c.execute("INSERT INTO design_requests VALUES(?,?)",(rid,now))
+        number=allocate_number(c,rid)
+        c.execute("UPDATE projects SET title=? WHERE id=?",(("Заказ" if order else "Заявка")+" · "+room+" · "+number,rid))
         cid=client_id()
         if cid and c.execute("SELECT id FROM clients WHERE id=?",(cid,)).fetchone():
             c.execute("INSERT INTO client_requests VALUES(?,?)",(rid,cid))
-    return jsonify(id=rid),201
+    return jsonify(id=rid,number=number),201
 
 @app.get("/api/projects")
 @admin
@@ -634,6 +659,7 @@ def projects():
                     matched="ai" if private and "ЛЕРИКА LAB V5.6 / Задание дизайнеру" in private["brief"] else "legacy"
                 p["request_source"]=matched
                 p["request_created"]=intake["created"]
+                p["request_number"]=existing_number(c,p["id"]) or p["id"][:12]
             p["files"]=[dict(f) for f in c.execute("SELECT id,stage,name,mime,image,public FROM files WHERE project=? ORDER BY stage,id",(p["id"],))]
         covers=[dict(x) for x in c.execute("SELECT * FROM covers")]
     return jsonify(projects=rows,covers=covers,categories=CATEGORIES,stages=STAGES)
@@ -726,6 +752,7 @@ def delete_project_rows(c,p):
     c.execute("DELETE FROM files WHERE project=?",(p,))
     c.execute("DELETE FROM client_requests WHERE project=?",(p,))
     c.execute("DELETE FROM design_briefs WHERE project=?",(p,))
+    c.execute("DELETE FROM request_numbers WHERE request_id=?",(p,))
     c.execute("DELETE FROM design_requests WHERE id=?",(p,))
     c.execute("DELETE FROM projects WHERE id=?",(p,))
 

@@ -24,7 +24,7 @@ class StudioTests(unittest.TestCase):
     def setUp(self):
         self.client=app.test_client()
         with db() as c:
-            for table in ("client_requests","clients","client_limits","price_catalog","covers","files","design_briefs","design_requests","projects","attempts"):
+            for table in ("client_requests","clients","client_limits","price_catalog","covers","files","design_briefs","request_numbers","design_requests","projects","attempts"):
                 c.execute("DELETE FROM "+table)
     def data(self,rid=None):
         return dict(request_id=rid or secrets.token_hex(16),consent="yes",title="Тест кухни",room="Кухня",contact="test@example.invalid",brief="Пожелания: тест")
@@ -415,6 +415,34 @@ class StudioTests(unittest.TestCase):
             c.execute("SELECT 1")
         with db() as check:
             self.assertIsNone(check.execute("SELECT action FROM client_limits WHERE action=?",("qa-rollback",)).fetchone())
+
+    def test_request_numbers_migration_retry_and_delete(self):
+        from app import migrate_request_numbers,lock
+        h={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        self.assertEqual(self.client.post("/api/client/register",json={"name":"Test","email":"number@example.invalid","password":"long-test-password-123","consent":True},headers=h,base_url=ORIGIN).status_code,201)
+        first=self.data()
+        a=self.submit(first);self.assertEqual(a.status_code,201)
+        b=self.submit(self.data());self.assertEqual(b.status_code,201)
+        self.assertRegex(a.json["number"],r"^L-[0-9]{6,}$")
+        self.assertEqual(int(b.json["number"][2:]),int(a.json["number"][2:])+1)
+        self.assertEqual(self.submit(first).json,a.json)
+        self.assertEqual({o["number"] for o in self.client.get("/api/client/session",base_url=ORIGIN).json["orders"]},{a.json["number"],b.json["number"]})
+        # Simulate one legacy request without a number and migrate twice.
+        with db() as c:
+            lock(c,82003)
+            c.execute("DELETE FROM request_numbers WHERE request_id=?",(b.json["id"],))
+            migrate_request_numbers(c)
+            row=c.execute("SELECT number FROM request_numbers WHERE request_id=?",(b.json["id"],)).fetchone()["number"]
+            migrate_request_numbers(c)
+            self.assertEqual(c.execute("SELECT number FROM request_numbers WHERE request_id=?",(b.json["id"],)).fetchone()["number"],row)
+        self.assertGreater(row,int(b.json["number"][2:]))
+        self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
+        listing=self.client.get("/api/projects",base_url=ORIGIN).json["projects"]
+        self.assertEqual(next(p["request_number"] for p in listing if p["id"]==a.json["id"]),a.json["number"])
+        with self.client.session_transaction() as session: csrf=session["csrf"]
+        self.assertEqual(self.client.delete("/api/projects/"+a.json["id"],json={"confirm":True},headers={"X-CSRF":csrf},base_url=ORIGIN).status_code,200)
+        c=self.submit(self.data());self.assertEqual(c.status_code,201)
+        self.assertGreater(int(c.json["number"][2:]),row)
 
     def test_configured_origin_and_public_cache(self):
         from unittest.mock import patch
