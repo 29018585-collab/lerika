@@ -125,25 +125,18 @@ jobs:
         env:
           LERIKA_QA_POSTGRES: '1'
 
-  image-source-review:
+  public-assets:
     if: github.head_ref == 'lerika-v523-interface'
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 4
+    strategy:
+      matrix:
+        group: [gallery, portfolio, labs]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - run: pip install Pillow==11.3.0
-      - name: Review only existing public portfolio images
-        run: |
-          python - <<'PY'
-          from PIL import Image,ImageOps
-          import base64,io
-          for i,name in enumerate(['Screenshot_20261127_020103_VK.jpg','Screenshot_20261127_030255_Telegram.jpg','Screenshot_20261127_080304_ChatGPT.jpg']):
-              im=ImageOps.exif_transpose(Image.open(name)).convert('RGB')
-              print('SOURCE',i,im.size)
-              im.thumbnail((400,650)); buf=io.BytesIO(); im.save(buf,'JPEG',quality=78)
-              s=base64.b64encode(buf.getvalue()).decode()
-              for start in range(0,len(s),3000): print('THUMB',i,start,s[start:start+3000])
-          PY
+      - name: Encode reviewed public images
+        run: python tests/prepare-public-assets.py --group ${{ matrix.group }} --emit
