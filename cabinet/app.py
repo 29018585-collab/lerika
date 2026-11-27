@@ -4,7 +4,7 @@ from urllib.parse import quote
 from threading import Lock
 from pathlib import Path
 from functools import wraps
-from flask import Flask, request, session, abort, jsonify, render_template, send_file
+from flask import Flask, request, session, abort, jsonify, render_template, send_file, redirect
 from werkzeug.security import check_password_hash, generate_password_hash
 from PIL import Image, ImageOps
 
@@ -106,6 +106,9 @@ def admin(f):
     return inner
 
 @app.get("/")
+def home():
+    return redirect("/showroom/",code=302)
+
 @app.get("/cabinet/")
 def index():
     return render_template("admin.html")
@@ -153,7 +156,7 @@ def showroom():
     html=html.replace('href="https://lerika-cabinet.onrender.com"','href="/cabinet/"')
     html=html.replace('href="https://lerika-cabinet.onrender.com/"','href="/cabinet/"')
     html=html.replace('href="https://lerika-cabinet.onrender.com/cabinet/"','href="/cabinet/"')
-    html=re.sub(r'(<meta name="lerika-portfolio-api" content=")[^"]*(")',lambda m:m[1]+request.host_url.rstrip("/")+m[2],html,count=1)
+    html=re.sub(r'(<meta name="lerika-portfolio-api" content=")[^"]*(")',lambda m:m[1]+"https://lerika-cabinet.onrender.com"+m[2],html,count=1)
     html=html.replace("</head>",'<link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/app-icon/192.png"><script defer src="/static/install.js"></script></head>',1)
     # Exact CSP hashes permit only the inline CSS/JS in this trusted public page.
     def hashes(tag):
