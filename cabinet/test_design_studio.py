@@ -26,7 +26,7 @@ class StudioTests(unittest.TestCase):
     def data(self,rid=None):
         return dict(request_id=rid or secrets.token_hex(16),consent="yes",title="Тест кухни",room="Кухня",contact="test@example.invalid",brief="Пожелания: тест")
     def submit(self,data,headers=HEADERS):
-        return self.client.post("/api/design-requests",data=data,headers=headers,base_url=ORIGIN)
+        return self.client.post("/api/design-requests",data=data,headers=headers,base_url=ORIGIN,content_type="multipart/form-data")
     def test_submit_with_files_collage_and_privacy(self):
         d=self.data()
         d["files"]=[(io.BytesIO(png()),"photo.png"),(io.BytesIO(b"%PDF-1.4\n%%EOF"),"drawing.pdf")]
