@@ -1,7 +1,7 @@
 (()=>{"use strict";
 const meta=document.querySelector('meta[name="lerika-portfolio-api"]');
 if(!meta||!meta.content)return;
-let base;try{const u=new URL(meta.content);if(u.protocol!=="https:")return;base=u.origin}catch{return}
+let base;try{const u=new URL(meta.content,location.href);if(u.protocol!=="https:")return;base=u.origin}catch{return}
 const stages=["Исходное помещение","Замеры и эскизы","3D-проект","Изготовление","Монтаж","Готовая мебель"];
 const el=(tag,txt,cls)=>{const a=document.createElement(tag);if(txt!==undefined)a.textContent=txt;if(cls)a.className=cls;return a};
 const photo=f=>{if(!/^[a-f0-9]{32}$/.test(f.id))return null;const img=el("img");img.src=base+"/public/photos/"+f.id;img.alt="Фото проекта";img.loading="lazy";img.decoding="async";return img};

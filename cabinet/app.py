@@ -1,7 +1,7 @@
 import os, sqlite3, secrets, time, io, json, re, hashlib, base64, mimetypes, csv, zipfile, hmac, ipaddress
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.request import urlopen, Request
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from threading import Lock
 from pathlib import Path
 from functools import wraps
@@ -34,6 +34,23 @@ REQUEST_SOURCES={"project":"Коллекция изделий","3d":"3D-конс
 CATEGORIES=["Кухни","Шкафы","Прихожие","Спальни","Детские","Гостиные","Гардеробные","Нестандартные системы хранения"]
 STAGES=["Исходное помещение","Замеры и эскизы","3D-проект","Изготовление","Монтаж","Готовая мебель"]
 ORIGIN="https://29018585-collab.github.io"
+DEFAULT_PUBLIC_ORIGIN="https://lerika-cabinet.onrender.com"
+def checked_origin(value):
+    value=value.strip().rstrip("/")
+    if not re.fullmatch(r"https://[a-zA-Z0-9.-]+(?::[0-9]{1,5})?",value):
+        raise RuntimeError("PUBLIC_ORIGIN/ALLOWED_ORIGINS must contain HTTPS origins only")
+    u=urlsplit(value)
+    if not u.hostname or u.port is not None and not 1<=u.port<=65535:
+        raise RuntimeError("Invalid public origin")
+    return "https://"+u.netloc.lower()
+PUBLIC_ORIGIN=checked_origin(os.environ.get("PUBLIC_ORIGIN",DEFAULT_PUBLIC_ORIGIN))
+ALLOWED_ORIGINS={PUBLIC_ORIGIN,DEFAULT_PUBLIC_ORIGIN}|{checked_origin(v) for v in os.environ.get("ALLOWED_ORIGINS","").split(",") if v.strip()}
+def current_public_origin():
+    # Match configured origins only, never reflect an arbitrary Host header.
+    return next((v for v in sorted(ALLOWED_ORIGINS) if urlsplit(v).netloc==request.host.lower()),PUBLIC_ORIGIN)
+def valid_public_origin():
+    return request.headers.get("Origin") in ALLOWED_ORIGINS and request.headers.get("Origin")==current_public_origin()
+
 Image.MAX_IMAGE_PIXELS=25000000
 
 class PostgresDB:
@@ -117,9 +134,16 @@ def headers(r):
     r.headers["Referrer-Policy"]="no-referrer"
     r.headers["X-Frame-Options"]="DENY"
     r.headers.setdefault("Content-Security-Policy","default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; manifest-src 'self'; worker-src 'self'")
-    r.headers["Cache-Control"]="no-store"
+    if not (request.path.startswith("/showroom/") and re.fullmatch(r"/showroom/scene-(?:lit|unlit)-[a-f0-9]{16}\.webp",request.path) and r.status_code in (200,304)):
+        r.headers["Cache-Control"]="no-store"
     if request.path.startswith("/public/"):
-        r.headers["Access-Control-Allow-Origin"]=ORIGIN
+        origin=request.headers.get("Origin")
+        if origin in ALLOWED_ORIGINS or origin==ORIGIN:
+            r.headers["Access-Control-Allow-Origin"]=origin
+            r.vary.add("Origin")
+        else:
+            r.headers["Access-Control-Allow-Origin"]=ORIGIN
+            r.vary.add("Origin")
     return r
 
 def admin(f):
@@ -163,6 +187,10 @@ def site_asset(name, limit):
         abort(404)
     if name.startswith(".") or ".." in name:
         abort(404)
+    if name=="portfolio-api.js" or re.fullmatch(r"scene-(?:lit|unlit)-[a-f0-9]{16}\.webp",name):
+        local=SITE_ROOT/name
+        if not local.is_file() or local.stat().st_size>limit: abort(404)
+        return local.read_bytes()
     with _site_lock:
         cached=_site_cache.get(name)
         if cached and time.monotonic()-cached[0]<60:
@@ -194,7 +222,9 @@ def showroom():
     html=html.replace('href="https://lerika-cabinet.onrender.com"','href="/cabinet/"')
     html=html.replace('href="https://lerika-cabinet.onrender.com/"','href="/cabinet/"')
     html=html.replace('href="https://lerika-cabinet.onrender.com/cabinet/"','href="/cabinet/"')
-    html=re.sub(r'(<meta name="lerika-portfolio-api" content=")[^"]*(")',lambda m:m[1]+"https://lerika-cabinet.onrender.com"+m[2],html,count=1)
+    origin=current_public_origin()
+    html=html.replace(DEFAULT_PUBLIC_ORIGIN,origin)
+    html=re.sub(r'(<meta name="lerika-portfolio-api" content=")[^"]*(")',lambda m:m[1]+"/"+m[2],html,count=1)
     html=html.replace("</head>",'<link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/app-icon/192.png"><script defer src="/static/install.js"></script></head>',1)
     # Exact CSP hashes permit only the inline CSS/JS in this trusted public page.
     def hashes(tag):
@@ -210,7 +240,10 @@ def showroom_asset(name):
     mime=mimetypes.guess_type(name)[0] or "application/octet-stream"
     # SVG is not a trusted inline document: no SVG uploads are exposed here.
     if name.lower().endswith(".svg"): abort(404)
-    return send_file(io.BytesIO(raw),mimetype=mime)
+    response=send_file(io.BytesIO(raw),mimetype=mime)
+    if re.fullmatch(r"scene-(?:lit|unlit)-[a-f0-9]{16}\.webp",name):
+        response.headers["Cache-Control"]="public, max-age=31536000, immutable"
+    return response
 
 @app.get("/manifest.webmanifest")
 def manifest():
@@ -268,7 +301,7 @@ def logout():
 
 
 def client_origin():
-    if request.headers.get("Origin")!="https://lerika-cabinet.onrender.com" or request.headers.get("X-Lerika-Client")!="1":
+    if not valid_public_origin() or request.headers.get("X-Lerika-Client")!="1":
         abort(403)
 
 def sender_address():
@@ -496,7 +529,7 @@ def design_request():
     source=request.form.get("source","order" if order else "ai")
     if source not in (("order","project","3d","config","plan","engineering","support","partner") if order else ("ai",)):
         abort(400)
-    if request.headers.get("Origin")!="https://lerika-cabinet.onrender.com" or request.headers.get("X-Lerika-Studio")!=("5.8" if order else "5.6"):
+    if not valid_public_origin() or request.headers.get("X-Lerika-Studio")!=("5.8" if order else "5.6"):
         abort(403)
     if request.mimetype!="multipart/form-data":
         abort(415)

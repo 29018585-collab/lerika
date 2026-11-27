@@ -416,6 +416,39 @@ class StudioTests(unittest.TestCase):
         with db() as check:
             self.assertIsNone(check.execute("SELECT action FROM client_limits WHERE action=?",("qa-rollback",)).fetchone())
 
+    def test_configured_origin_and_public_cache(self):
+        from unittest.mock import patch
+        from app import checked_origin
+        domain="https://lerika-qa.example.invalid"
+        for bad in ("http://example.invalid","https://example.invalid/path","https://x.invalid@evil.invalid","https://x.invalid?x=1"):
+            with self.assertRaises(RuntimeError): checked_origin(bad)
+        with patch("app.PUBLIC_ORIGIN",domain),patch("app.ALLOWED_ORIGINS",{domain,ORIGIN}):
+            r=self.client.get("/showroom/",base_url=domain)
+            self.assertEqual(r.status_code,200)
+            self.assertTrue(('name="lerika-app-origin" content="'+domain+'"').encode() in r.data)
+            self.assertTrue(b'name="lerika-portfolio-api" content="/"' in r.data)
+            self.assertEqual(r.headers["Cache-Control"],"no-store")
+            self.assertEqual(self.client.post("/api/design-requests",data=self.data(),headers={"Origin":domain,"X-Lerika-Studio":"5.6"},base_url=domain).status_code,201)
+            self.assertEqual(self.client.post("/api/design-requests",data=self.data(),headers={"Origin":"https://evil.invalid","X-Lerika-Studio":"5.6"},base_url=domain).status_code,403)
+            self.assertEqual(self.client.post("/api/design-requests",data=self.data(),headers={"Origin":ORIGIN,"X-Lerika-Studio":"5.6"},base_url=domain).status_code,403)
+            r=self.client.get("/public/portfolio",headers={"Origin":domain},base_url=domain)
+            self.assertEqual(r.headers["Access-Control-Allow-Origin"],domain)
+            self.assertIn("Origin",r.headers["Vary"])
+            self.assertEqual(r.headers["Cache-Control"],"no-store")
+            r=self.client.get("/showroom/",base_url="https://evil.invalid")
+            self.assertFalse(b'content="https://evil.invalid"' in r.data)
+        from pathlib import Path
+        from app import SITE_ROOT
+        scenes=sorted(SITE_ROOT.glob("scene-*.webp"))
+        self.assertEqual(len(scenes),2)
+        for f in scenes:
+            r=self.client.get("/showroom/"+f.name)
+            self.assertEqual(r.status_code,200)
+            self.assertEqual(r.headers["Cache-Control"],"public, max-age=31536000, immutable")
+            self.assertEqual(r.data,f.read_bytes())
+        self.assertLess((SITE_ROOT/"index.html").stat().st_size,500000)
+        self.assertEqual(self.client.get("/api/projects").headers["Cache-Control"],"no-store")
+
     def test_showroom_local_revision_and_csp(self):
         r=self.client.get("/showroom/")
         self.assertEqual(r.status_code,200)

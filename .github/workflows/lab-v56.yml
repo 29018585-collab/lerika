@@ -2,7 +2,7 @@ name: Lab V5.6 isolated regression
 on:
   pull_request:
     branches: [lerika-cabinet-v1, lerika-v521-calculations]
-    paths: ['index.html', 'cabinet/**', 'tests/**', '.github/workflows/lab-v56.yml']
+    paths: ['index.html', 'portfolio-api.js', 'scene-*.webp', 'cabinet/**', 'tests/**', '.github/workflows/lab-v56.yml']
   workflow_dispatch:
 permissions:
   contents: read

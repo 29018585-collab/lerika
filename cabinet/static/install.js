@@ -19,7 +19,7 @@ if(document.getElementById('loginForm')){
 (()=>{"use strict";
 const button=document.getElementById("lerika-share"),panel=document.getElementById("lerika-share-panel"),field=document.getElementById("lerika-share-url"),status=document.getElementById("lerika-share-status"),copy=document.getElementById("lerika-share-copy"),close=document.getElementById("lerika-share-close");
 if(!button||!panel||!field||!status||!copy||!close)return;
-const url="https://lerika-cabinet.onrender.com/showroom/";
+const url=location.origin+"/showroom/";
 field.value=url;
 function show(){panel.hidden=false;button.setAttribute("aria-expanded","true");status.textContent="";field.focus();field.select()}
 function hide(){panel.hidden=true;button.setAttribute("aria-expanded","false");button.focus()}
