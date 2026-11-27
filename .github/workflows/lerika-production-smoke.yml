@@ -24,9 +24,14 @@ jobs:
           }
           check / 302
           check /showroom/ 200
+          # Confirm deployed showroom serves the V5.21 calculation/export implementation.
+          curl -fsS --max-time 60 "$BASE/showroom/" -o /tmp/lerika-showroom.html
+          grep -Fq 'Корпус (в расчёте)' /tmp/lerika-showroom.html
+          grep -Fq 'function panelProjection' /tmp/lerika-showroom.html
+          echo 'PASS: V5.21 showroom markers'
           check /cabinet/ 200
           check /public/prices 200
           check /public/portfolio 200
           check /api/projects 401
           check /api/client/session 401
-          echo 'PASS: post-V5.20 live deployment read-only smoke; no customer submissions or authenticated writes'
+          echo 'PASS: post-V5.21 live deployment read-only smoke; no customer submissions or authenticated writes'
