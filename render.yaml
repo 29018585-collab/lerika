@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: lerika-cabinet
+    runtime: python
+    plan: free
+    region: frankfurt
+    branch: lerika-cabinet-v1
+    rootDir: cabinet
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --workers 1 --threads 2 --bind 0.0.0.0:$PORT app:app
+    healthCheckPath: /health
+    autoDeployTrigger: off
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
