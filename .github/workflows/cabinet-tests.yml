@@ -2,13 +2,27 @@ name: LERIKA cabinet privacy tests
 on:
   push:
     branches: [lerika-cabinet-v1]
-    paths: ['cabinet/**', '.github/workflows/cabinet-tests.yml']
+    paths: ['cabinet/**', 'portfolio-api.js', 'render.yaml', '.github/workflows/cabinet-tests.yml']
 permissions:
   contents: read
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: lerika_test
+          POSTGRES_PASSWORD: local_ci_only
+          POSTGRES_DB: lerika_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lerika_test -d lerika_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: cabinet
@@ -18,5 +32,11 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements.txt
-      - run: python -m unittest -v test_privacy
+      - name: SQLite privacy tests
+        run: python -m unittest -v test_privacy
+      - name: PostgreSQL privacy tests
+        env:
+          TEST_DATABASE_URL: postgresql://lerika_test:local_ci_only@localhost:5432/lerika_test
+        run: python -m unittest -v test_privacy
       - run: node --check static/admin.js
+      - run: node --check ../portfolio-api.js
