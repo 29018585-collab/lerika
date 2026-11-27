@@ -1,4 +1,7 @@
-import os, sqlite3, secrets, time, io, json
+import os, sqlite3, secrets, time, io, json, re, hashlib, base64, mimetypes
+from urllib.request import urlopen, Request
+from urllib.parse import quote
+from threading import Lock
 from pathlib import Path
 from functools import wraps
 from flask import Flask, request, session, abort, jsonify, render_template, send_file
@@ -85,7 +88,7 @@ def headers(r):
     r.headers["X-Content-Type-Options"]="nosniff"
     r.headers["Referrer-Policy"]="no-referrer"
     r.headers["X-Frame-Options"]="DENY"
-    r.headers["Content-Security-Policy"]="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; manifest-src 'self'; worker-src 'self'"
+    r.headers.setdefault("Content-Security-Policy","default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; manifest-src 'self'; worker-src 'self'")
     r.headers["Cache-Control"]="no-store"
     if request.path.startswith("/public/"):
         r.headers["Access-Control-Allow-Origin"]=ORIGIN
@@ -103,9 +106,70 @@ def admin(f):
     return inner
 
 @app.get("/")
+@app.get("/cabinet/")
 def index():
     return render_template("admin.html")
 
+
+
+# Public showroom is served on the same origin as the installed app.
+# Only the fixed, public LERIKA website is fetched. No session cookies or secrets
+# are forwarded. The checked-in public snapshot is the offline-upstream fallback.
+SITE_ROOT=Path(app.root_path).parent
+SITE_URL="https://29018585-collab.github.io/lerika/"
+_site_cache={}
+_site_lock=Lock()
+
+def site_asset(name, limit):
+    if not (name in ("index.html","portfolio-api.js") or re.fullmatch(r"[A-Za-z0-9_.-]{1,160}\.(?:png|jpg|jpeg|webp|svg|gif|ico|css)",name,re.I)):
+        abort(404)
+    if name.startswith(".") or ".." in name:
+        abort(404)
+    with _site_lock:
+        cached=_site_cache.get(name)
+        if cached and time.monotonic()-cached[0]<60:
+            return cached[1]
+    url=SITE_URL+quote(name)
+    try:
+        with urlopen(Request(url,headers={"User-Agent":"LERIKA-showroom/1.1","Accept-Encoding":"identity"}),timeout=4) as r:
+            if r.geturl()!=url or r.status!=200: raise ValueError("Unexpected upstream")
+            raw=r.read(limit+1)
+        if not raw or len(raw)>limit: raise ValueError("Invalid upstream asset")
+        if name=="index.html" and (b'id="kitchen"' not in raw or b'id="portfolio-8"' not in raw):
+            raise ValueError("Unexpected public page")
+        with _site_lock:
+            if len(_site_cache)>=24: _site_cache.clear()
+            _site_cache[name]=(time.monotonic(),raw)
+        return raw
+    except Exception:
+        if cached: return cached[1]
+        local=SITE_ROOT/name
+        if not local.is_file() or local.stat().st_size>limit: abort(404)
+        return local.read_bytes()
+
+@app.get("/showroom/")
+def showroom():
+    html=site_asset("index.html",4*1024*1024).decode("utf-8")
+    html=html.replace('href="https://lerika-cabinet.onrender.com"','href="/cabinet/"')
+    html=html.replace('href="https://lerika-cabinet.onrender.com/"','href="/cabinet/"')
+    html=html.replace('href="https://lerika-cabinet.onrender.com/cabinet/"','href="/cabinet/"')
+    html=re.sub(r'(<meta name="lerika-portfolio-api" content=")[^"]*(")',lambda m:m[1]+request.host_url.rstrip("/")+m[2],html,count=1)
+    html=html.replace("</head>",'<link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/app-icon/192.png"><script defer src="/static/install.js"></script></head>',1)
+    # Exact CSP hashes permit only the inline CSS/JS in this trusted public page.
+    def hashes(tag):
+        return " ".join("'sha256-"+base64.b64encode(hashlib.sha256(m.encode("utf-8")).digest()).decode("ascii")+"'" for m in re.findall(r"<"+tag+r"\b[^>]*>([\s\S]*?)</"+tag+r">",html,re.I) if m)
+    response=app.make_response((html,200,{"Content-Type":"text/html; charset=utf-8"}))
+    response.headers["Content-Security-Policy"]="default-src 'none'; script-src 'self' "+hashes("script")+"; style-src 'self' "+hashes("style")+"; img-src 'self' data: blob:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+    return response
+
+@app.get("/showroom/<name>")
+def showroom_asset(name):
+    if name=="index.html": return showroom()
+    raw=site_asset(name,8*1024*1024)
+    mime=mimetypes.guess_type(name)[0] or "application/octet-stream"
+    # SVG is not a trusted inline document: no SVG uploads are exposed here.
+    if name.lower().endswith(".svg"): abort(404)
+    return send_file(io.BytesIO(raw),mimetype=mime)
 
 @app.get("/manifest.webmanifest")
 def manifest():
