@@ -736,7 +736,7 @@ if(!pick)return null;
 const project=([x,y,z])=>[x*cy-z*sy,-(y*cp-(x*sy+z*cy)*sp),x*sy*cp+y*sp+z*cy*cp];
 const all=boxes.map(b=>{const {x,y,z,a,b:h,c}=b;const local=[[x,y,z],[x+a,y,z],[x+a,y+h,z],[x,y+h,z],[x,y,z+c],[x+a,y,z+c],[x+a,y+h,z+c],[x,y+h,z+c]];const world=local.map(p=>{if(!b.hinge)return p;const [hx,hz]=b.hinge,dx=p[0]-hx,dz=p[2]-hz,a=b.angle;return [hx+dx*Math.cos(a)-dz*Math.sin(a),p[1],hz+dx*Math.sin(a)+dz*Math.cos(a)]});return {b,world,local,p:world.map(project)}});
 const points=all.flatMap(b=>b.p),xs=points.map(p=>p[0]),ys=points.map(p=>p[1]),cx=(Math.min(...xs)+Math.max(...xs))/2,cyy=(Math.min(...ys)+Math.max(...ys))/2,k=pick.scale;
-const depth=new Float32Array(W*H);depth.fill(-Infinity);const owners=new Int32Array(W*H);owners.fill(-1);
+const depth=new Float64Array(W*H);depth.fill(-Infinity);const owners=new Int32Array(W*H);owners.fill(-1);
 const img=ctx.getImageData(0,0,W,H),data=img.data;
 const faces=[[0,3,2,1],[4,5,6,7],[0,4,7,3],[1,2,6,5],[0,1,5,4],[3,7,6,2]],shade=[.74,1,.76,.88,.64,1.12],clamp=v=>Math.max(0,Math.min(255,v));
 const textureCache=window.LerikaRoomRaster.tiles||(window.LerikaRoomRaster.tiles=new Map());
@@ -745,7 +745,7 @@ function raster(a,b,c,base,tex,owner,du,dv){
 const den=(b[1]-c[1])*(a[0]-c[0])+(c[0]-b[0])*(a[1]-c[1]);if(Math.abs(den)<1e-8)return;
 const x0=Math.max(0,Math.floor(Math.min(a[0],b[0],c[0]))),x1=Math.min(W-1,Math.ceil(Math.max(a[0],b[0],c[0]))),y0=Math.max(0,Math.floor(Math.min(a[1],b[1],c[1]))),y1=Math.min(H-1,Math.ceil(Math.max(a[1],b[1],c[1])));
 const edgeU=Math.min(.09,.85/Math.max(1,du*k)),edgeV=Math.min(.09,.85/Math.max(1,dv*k));
-for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const px=x+.5,py=y+.5,t=((b[1]-c[1])*(px-c[0])+(c[0]-b[0])*(py-c[1]))/den,u=((c[1]-a[1])*(px-c[0])+(a[0]-c[0])*(py-c[1]))/den,v=1-t-u;if(t<-.00001||u<-.00001||v<-.00001)continue;const z=t*a[2]+u*b[2]+v*c[2],i=y*W+x;if(z<depth[i]-.0001)continue;depth[i]=z;owners[i]=owner;const U=t*a[3]+u*b[3]+v*c[3],V=t*a[4]+u*b[4]+v*c[4];const uu=t*a[5]+u*b[5]+v*c[5],vv=t*a[6]+u*b[6]+v*c[6];const shift=tex?tex[((Math.floor(V/3)&255)<<8)+(Math.floor(U/3)&255)]:0,edge=uu<edgeU||uu>1-edgeU||vv<edgeV||vv>1-edgeV,j=i*4,light=edge?.80:1;data[j]=clamp((base[0]+shift)*light);data[j+1]=clamp((base[1]+shift)*light);data[j+2]=clamp((base[2]+shift)*light);data[j+3]=255}
+for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const px=x+.5,py=y+.5,t=((b[1]-c[1])*(px-c[0])+(c[0]-b[0])*(py-c[1]))/den,u=((c[1]-a[1])*(px-c[0])+(a[0]-c[0])*(py-c[1]))/den,v=1-t-u;if(t<-1e-10||u<-1e-10||v<-1e-10)continue;const z=t*a[2]+u*b[2]+v*c[2],i=y*W+x;if(z<depth[i]-1e-7)continue;depth[i]=z;owners[i]=owner;const U=t*a[3]+u*b[3]+v*c[3],V=t*a[4]+u*b[4]+v*c[4];const uu=t*a[5]+u*b[5]+v*c[5],vv=t*a[6]+u*b[6]+v*c[6];const shift=tex?tex[((Math.floor(V/3)&255)<<8)+(Math.floor(U/3)&255)]:0,edge=uu<edgeU||uu>1-edgeU||vv<edgeV||vv>1-edgeV,j=i*4,light=edge?.80:1;data[j]=clamp((base[0]+shift)*light);data[j+1]=clamp((base[1]+shift)*light);data[j+2]=clamp((base[2]+shift)*light);data[j+3]=255}
 }
 for(const {b,world,local,p} of all){const rgb=parseInt(b.color.slice(1),16),base=[rgb>>16&255,rgb>>8&255,rgb&255],tex=tile(window.LerikaDecors.find(b.color)?.texture);
 for(let fi=0;fi<6;fi++){const ids=faces[fi],pr=ids.map(i=>p[i]);if((pr[1][0]-pr[0][0])*(pr[2][1]-pr[0][1])-(pr[1][1]-pr[0][1])*(pr[2][0]-pr[0][0])>=0)continue;const ws=ids.map(i=>world[i]),origin=ws[0],len=(p,q)=>Math.hypot(...p.map((v,i)=>v-q[i])),du=len(ws[1],origin),dv=len(ws[3],origin),horizontal=fi>=4;
