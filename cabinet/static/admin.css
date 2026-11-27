@@ -10,3 +10,5 @@
 
 /* Private incoming requests */
 .cabinet-nav,.request-filters{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 20px}.cabinet-nav button{flex:1;min-width:132px}.cabinet-nav button[aria-pressed=true],.request-filters button[aria-pressed=true]{background:var(--accent);color:#24180f;font-weight:650}.request-filters button{font-size:14px;min-height:44px;text-align:left}.request-item h3{margin:8px 0;overflow-wrap:anywhere}.request-source,#requestOrigin{color:var(--accent);font-weight:650}.request-item p{margin:5px 0 10px}.request-item button{width:100%;margin-top:5px}@media(max-width:500px){.request-filters button{flex:1 1 43%;min-width:0;white-space:normal}}
+
+#pricePane,#clientsPane{overflow-wrap:anywhere}#priceForm{margin:16px 0}#priceStatus{color:var(--accent)}

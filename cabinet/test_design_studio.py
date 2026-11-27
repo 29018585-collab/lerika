@@ -21,7 +21,7 @@ class StudioTests(unittest.TestCase):
     def setUp(self):
         self.client=app.test_client()
         with db() as c:
-            for table in ("covers","files","design_briefs","design_requests","projects","attempts"):
+            for table in ("client_requests","clients","client_limits","price_catalog","covers","files","design_briefs","design_requests","projects","attempts"):
                 c.execute("DELETE FROM "+table)
     def data(self,rid=None):
         return dict(request_id=rid or secrets.token_hex(16),consent="yes",title="Тест кухни",room="Кухня",contact="test@example.invalid",brief="Пожелания: тест")
@@ -130,6 +130,39 @@ class StudioTests(unittest.TestCase):
             r=self.client.get("/support/telegram",base_url=ORIGIN)
             self.assertEqual(r.status_code,503)
             self.assertNotIn("Location",r.headers)
+    def test_clients_own_requests_and_admin_separation(self):
+        headers={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        d={"name":"Test","email":"a@example.invalid","password":"long-test-password-123","consent":True}
+        self.assertEqual(self.client.post("/api/client/register",json=d,headers=headers,base_url=ORIGIN).status_code,201)
+        self.assertEqual(self.client.get("/api/projects",base_url=ORIGIN).status_code,401)
+        rid=self.submit(self.data()).json["id"]
+        self.assertEqual([x["id"] for x in self.client.get("/api/client/session",base_url=ORIGIN).json["orders"]],[rid])
+        other=app.test_client()
+        self.assertEqual(other.post("/api/client/register",json={**d,"email":"b@example.invalid"},headers=headers,base_url=ORIGIN).status_code,201)
+        self.assertEqual(other.get("/api/client/session",base_url=ORIGIN).json["orders"],[])
+        self.client.post("/api/client/logout",json={},headers=headers,base_url=ORIGIN)
+        self.assertEqual(self.client.get("/api/client/session",base_url=ORIGIN).status_code,401)
+        self.assertEqual(self.client.post("/api/client/login",json=d,headers=headers,base_url=ORIGIN).status_code,200)
+        with db() as c:
+            self.assertNotEqual(c.execute("SELECT password_hash FROM clients WHERE email=?",("a@example.invalid",)).fetchone()["password_hash"],d["password"])
+    def test_price_upload_validation_and_privacy(self):
+        raw="Группа;Материал;Цена\nкорпус;ЛДСП;1200\nфасады;МДФ эмаль;2500\n".encode("utf-8")
+        def upload(headers):
+            return self.client.post("/api/prices",data={"file":(io.BytesIO(raw),"price.csv")},headers=headers,base_url=ORIGIN)
+        self.assertEqual(upload({}).status_code,401)
+        login=self.client.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
+        headers={"X-CSRF":login.json["csrf"]}
+        self.assertEqual(upload(headers).status_code,200)
+        result=self.client.get("/public/prices",base_url=ORIGIN).json
+        self.assertEqual([x["price"] for x in result["entries"]],[1200,2500])
+        bad=self.client.post("/api/prices",data={"file":(io.BytesIO("Группа;Материал;Цена\nкорпус;ЛДСП;-1".encode()),"bad.csv")},headers=headers,base_url=ORIGIN)
+        self.assertEqual(bad.status_code,400)
+        self.assertEqual(self.client.get("/public/prices",base_url=ORIGIN).json,result)
+        from openpyxl import Workbook
+        wb=Workbook();ws=wb.active;ws.title="Прайс";ws.append(["Группа","Материал","Цена"]);ws.append(["корпус","ЛДСП",1500])
+        stream=io.BytesIO();wb.save(stream);stream.seek(0)
+        self.assertEqual(self.client.post("/api/prices",data={"file":(stream,"price.xlsx")},headers=headers,base_url=ORIGIN).status_code,200)
+        self.assertEqual(self.client.get("/public/prices",base_url=ORIGIN).json["entries"][0]["price"],1500)
     def test_duplicate(self):
         d=self.data()
         self.assertEqual(self.submit(d.copy()).status_code,201)

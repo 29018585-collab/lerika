@@ -1,4 +1,5 @@
-import os, sqlite3, secrets, time, io, json, re, hashlib, base64, mimetypes
+import os, sqlite3, secrets, time, io, json, re, hashlib, base64, mimetypes, csv, zipfile
+from decimal import Decimal, InvalidOperation
 from urllib.request import urlopen, Request
 from urllib.parse import quote
 from threading import Lock
@@ -75,6 +76,10 @@ if not SETUP_REQUIRED:
     CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY CHECK(id=1), count INTEGER NOT NULL, since INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS design_requests(id TEXT PRIMARY KEY, created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS design_briefs(project TEXT PRIMARY KEY REFERENCES projects(id), brief TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS clients(id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, password_hash TEXT NOT NULL, created INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS client_requests(project TEXT PRIMARY KEY REFERENCES projects(id), client TEXT NOT NULL REFERENCES clients(id));
+    CREATE TABLE IF NOT EXISTS client_limits(action TEXT PRIMARY KEY, count INTEGER NOT NULL, since INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS price_catalog(id INTEGER PRIMARY KEY CHECK(id=1), entries TEXT NOT NULL, updated INTEGER NOT NULL);
     """)
     # Migrate only the initial V5.6 intake records, if any. Preserve the client
     # brief privately and remove it from the public-facing project metadata.
@@ -256,6 +261,141 @@ def logout():
     session.clear()
     return jsonify(ok=True)
 
+
+def client_origin():
+    if request.headers.get("Origin")!="https://lerika-cabinet.onrender.com" or request.headers.get("X-Lerika-Client")!="1":
+        abort(403)
+
+def client_limit(action,maximum,period):
+    now=int(time.time())
+    with db() as c:
+        lock(c,82005)
+        row=c.execute("SELECT count,since FROM client_limits WHERE action=?",(action,)).fetchone()
+        count=row["count"] if row and now-row["since"]<period else 0
+        since=row["since"] if count else now
+        if count>=maximum: abort(429)
+        c.execute("INSERT INTO client_limits VALUES(?,?,?) ON CONFLICT(action) DO UPDATE SET count=excluded.count,since=excluded.since",(action,count+1,since))
+
+def client_id():
+    return session.get("client") if time.time()-session.get("client_login",0)<43200 else None
+
+@app.post("/api/client/register")
+def client_register():
+    client_origin()
+    if not request.is_json: abort(415)
+    d=request.get_json()
+    if not isinstance(d,dict) or not all(isinstance(d.get(k),str) for k in ("name","email","password")) or d.get("consent") is not True: abort(400)
+    name=d["name"].strip();email=d["email"].strip().lower();password=d["password"]
+    if not (1<=len(name)<=100 and len(email)<=150 and re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+",email) and 12<=len(password)<=128): abort(400)
+    client_limit("register",20,3600)
+    cid=secrets.token_hex(16)
+    hashed=generate_password_hash(password)
+    with db() as c:
+        lock(c,82006)
+        if c.execute("SELECT id FROM clients WHERE email=?",(email,)).fetchone(): abort(409)
+        c.execute("INSERT INTO clients VALUES(?,?,?,?,?)",(cid,email,name,hashed,int(time.time())))
+    session.clear()
+    session.update(client=cid,client_login=int(time.time()))
+    return jsonify(ok=True),201
+
+@app.post("/api/client/login")
+def client_login():
+    client_origin()
+    if not request.is_json: abort(415)
+    d=request.get_json()
+    if not isinstance(d,dict) or not all(isinstance(d.get(k),str) for k in ("email","password")): abort(400)
+    email=d["email"].strip().lower();password=d["password"]
+    if not (1<=len(email)<=150 and 1<=len(password)<=128): abort(400)
+    client_limit("login",50,900)
+    with db() as c: row=c.execute("SELECT id,password_hash FROM clients WHERE email=?",(email,)).fetchone()
+    valid=check_password_hash(row["password_hash"] if row else PASSWORD,password)
+    if not row or not valid: abort(401)
+    session.clear()
+    session.update(client=row["id"],client_login=int(time.time()))
+    return jsonify(ok=True)
+
+@app.post("/api/client/logout")
+def client_logout():
+    client_origin()
+    session.pop("client",None);session.pop("client_login",None)
+    return jsonify(ok=True)
+
+@app.get("/api/client/session")
+def client_session():
+    cid=client_id()
+    if not cid: abort(401)
+    with db() as c:
+        row=c.execute("SELECT name,email FROM clients WHERE id=?",(cid,)).fetchone()
+        if not row: abort(401)
+        orders=[dict(x) for x in c.execute("SELECT p.id,p.title,p.stage,p.status,r.created FROM client_requests cr JOIN projects p ON p.id=cr.project JOIN design_requests r ON r.id=p.id WHERE cr.client=? ORDER BY r.created DESC",(cid,))]
+    return jsonify(name=row["name"],email=row["email"],orders=orders)
+
+@app.get("/api/clients")
+@admin
+def clients_list():
+    with db() as c:
+        rows=[dict(x) for x in c.execute("SELECT id,name,email,created FROM clients ORDER BY created DESC")]
+    return jsonify(clients=rows)
+
+PRICE_MATERIALS={
+    "корпус":["ЛДСП","МДФ","Фанера","Мебельный щит","Массив дерева"],
+    "фасады":["ЛДСП","МДФ плёнка ПВХ","МДФ эмаль","МДФ акрил","МДФ пластик HPL","МДФ шпон","Фанера","Массив дерева","Стекло (визуальный аналог)"]
+}
+def price_rows(file):
+    raw=file.read(2*1024*1024+1)
+    if not raw or len(raw)>2*1024*1024: abort(413)
+    name=(file.filename or "").lower()
+    if name.endswith(".csv"):
+        content=raw.decode("utf-8-sig")
+        delimiter=";" if ";" in content.splitlines()[0] else ","
+        rows=list(csv.reader(io.StringIO(content),delimiter=delimiter))
+    elif name.endswith(".xlsx"):
+        from openpyxl import load_workbook
+        with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            if len(z.infolist())>100 or sum(x.file_size for x in z.infolist())>20*1024*1024: abort(413)
+            if any(x.flag_bits&1 for x in z.infolist()): abort(400)
+        wb=load_workbook(io.BytesIO(raw),read_only=True,data_only=False,keep_links=False)
+        try:
+            ws=wb["Прайс"] if "Прайс" in wb.sheetnames else wb.active
+            if (ws.max_row and ws.max_row>200) or (ws.max_column and ws.max_column>3): abort(400)
+            rows=list(ws.iter_rows(min_row=1,max_row=200,max_col=3,values_only=True))
+        finally: wb.close()
+    else: abort(415)
+    if not rows or len(rows)>200 or [str(x or "").strip().casefold() for x in rows[0]]!=["группа","материал","цена"]: abort(400)
+    entries=[];seen=set()
+    for row in rows[1:]:
+        if not any(x is not None and str(x).strip() for x in row): continue
+        if len(row)!=3: abort(400)
+        group,material,value=row
+        group=str(group).strip().casefold();material=str(material).strip()
+        match=next((x for x in PRICE_MATERIALS.get(group,[]) if x.casefold()==material.casefold()),None)
+        if not match or (group,match) in seen: abort(400)
+        try: price=Decimal(str(value).replace(" ","").replace(",","."))
+        except InvalidOperation: abort(400)
+        if not price.is_finite() or not (0<price<=1000000) or price.as_tuple().exponent < -2: abort(400)
+        entries.append(dict(group=group,material=match,price=float(price)))
+        seen.add((group,match))
+    if not entries: abort(400)
+    return entries
+
+@app.get("/public/prices")
+def public_prices():
+    with db() as c: row=c.execute("SELECT entries,updated FROM price_catalog WHERE id=1").fetchone()
+    return jsonify(entries=json.loads(row["entries"]) if row else [],updated=row["updated"] if row else None)
+
+@app.post("/api/prices")
+@admin
+def upload_prices():
+    f=request.files.get("file")
+    if not f: abort(400)
+    try: entries=price_rows(f)
+    except (ValueError,TypeError,IndexError,KeyError,zipfile.BadZipFile,UnicodeError): abort(400)
+    now=int(time.time())
+    with db() as c:
+        lock(c,82007)
+        c.execute("INSERT INTO price_catalog VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET entries=excluded.entries,updated=excluded.updated",(json.dumps(entries,ensure_ascii=False),now))
+    return jsonify(entries=entries,updated=now)
+
 def project_record(p):
     data=request.get_json()
     if not isinstance(data,dict): abort(400)
@@ -366,6 +506,9 @@ def design_request():
             # Attachments (including the collage) are private by default.
             c.execute("INSERT INTO files VALUES(?,?,?,?,?,?,0,?)",(secrets.token_hex(16),rid,1,name,mime,image,raw))
         c.execute("INSERT INTO design_requests VALUES(?,?)",(rid,now))
+        cid=client_id()
+        if cid and c.execute("SELECT id FROM clients WHERE id=?",(cid,)).fetchone():
+            c.execute("INSERT INTO client_requests VALUES(?,?)",(rid,cid))
     return jsonify(id=rid),201
 
 @app.get("/api/projects")
