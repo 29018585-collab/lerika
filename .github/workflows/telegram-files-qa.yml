@@ -2,6 +2,8 @@ name: Telegram file intake QA
 on:
   pull_request:
     branches: [lerika-cabinet-v1]
+  push:
+    branches: [lerika-v549-integrated-qa]
 permissions:
   contents: read
 jobs:
