@@ -1,0 +1,29 @@
+"use strict";
+const {chromium}=require("playwright"),assert=require("node:assert/strict"),fs=require("node:fs"),http=require("node:http");
+const html=fs.readFileSync("index.html");
+const server=http.createServer((req,res)=>{if(req.url==="/"){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(html)}else{res.writeHead(404);res.end()}});
+const spec={height:2700,partition:160,corridorDepth:1500,corridorLength:0,doorWidth:900,rooms:[{name:"Кухня",w:3200,d:3000,side:"top"},{name:"Спальня",w:3400,d:3200,side:"top"},{name:"Гостиная",w:4000,d:3500,side:"bottom"},{name:"Ванная",w:2400,d:2000,side:"bottom"}]};
+(async()=>{await new Promise(r=>server.listen(0,"127.0.0.1",r));const browser=await chromium.launch({headless:true});try{
+for(const viewport of [{width:390,height:844},{width:844,height:390}]){
+const page=await browser.newPage({viewport,deviceScaleFactor:1,hasTouch:true,acceptDownloads:true});
+const errors=[];page.on("pageerror",e=>errors.push(e.message));page.on("dialog",d=>d.accept());
+await page.goto("http://127.0.0.1:"+server.address().port+"/#design-lab/plan",{waitUntil:"domcontentloaded"});
+await page.locator("#lp-view").waitFor({state:"visible"});
+const fixture=await page.evaluate(spec=>{const e=document.getElementById("lp-view").liveEdit.editor;const err=e.applyApartmentDraft(spec);if(err)throw Error(err);for(const r of e.apartment().rooms.filter(r=>r.id!==1)){e.switchRoom(r.id);const err=e.add("chair");if(err)throw Error(err)}e.switchRoom(1);return LerikaRoomProject.apartmentSnapshot()},spec);
+assert.equal(fixture.rooms.length,5);assert.equal(fixture.rooms.reduce((n,r)=>n+r.plan.items.length,0),4);
+await page.locator("#lz-open-lp-view").tap();await page.locator("#lz-dialog").waitFor({state:"visible"});
+const sheet=page.locator("#lz-sheet"),body=page.locator("#lz-sheet-body");
+const close=async()=>{await page.locator("#lz-sheet-close").tap();await sheet.waitFor({state:"hidden"})};
+const button=label=>body.getByRole("button",{name:label,exact:true});
+async function fullView(kind,selector){assert.equal(await sheet.getAttribute("data-kind"),kind);assert.equal(await page.locator("#lz-room-tools").isVisible(),false);assert.equal(await page.locator("#lz-foot").isVisible(),false);const c=page.locator(selector);await c.waitFor({state:"visible"});const b=await c.boundingBox(),s=await sheet.boundingBox();assert.ok(s.height>=viewport.height*.63,JSON.stringify({s,viewport}));assert.ok(b.height>=(viewport.height>500?220:150),JSON.stringify({b,viewport}));assert.ok(b.x>=0&&b.x+b.width<=viewport.width+1);assert.ok(await c.evaluate(c=>{const d=c.getContext("2d").getImageData(0,0,c.width,c.height).data;let colors=new Set();for(let i=0;i<d.length;i+=160)colors.add(d[i]+","+d[i+1]+","+d[i+2]);return colors.size>5}));return c}
+await page.locator("#lz-apartment").tap();assert.equal(await sheet.getAttribute("data-kind"),"apartment");assert.equal(await body.getByRole("button",{name:/ · .* × .* мм · .* объектов/}).count(),5);
+await close();await page.locator("#lz-apartment-3d").tap();
+let c=await fullView("apartment3d",".lz-whole-canvas"),before=await c.evaluate(c=>c.toDataURL());await button("⟳ Повернуть").tap();assert.notEqual(await c.evaluate(c=>c.toDataURL()),before);await button("⟲ Повернуть").tap();assert.equal(await c.evaluate(c=>c.toDataURL()),before);
+await page.screenshot({path:"apartment-"+viewport.width+".png"});await close();
+await page.locator("#lz-walk").tap();c=await fullView("walk",".lz-walk-canvas");before=await c.evaluate(c=>c.toDataURL());await button("⟳ Вправо").tap();assert.notEqual(await c.evaluate(c=>c.toDataURL()),before);await button("⟲ Влево").tap();assert.equal(await c.evaluate(c=>c.toDataURL()),before);
+await button("↑ Вперёд").tap();assert.notEqual(await c.evaluate(c=>c.toDataURL()),before);
+const b=await c.boundingBox(),cdp=await page.context().newCDPSession(page);before=await c.evaluate(c=>c.toDataURL());const x=b.x+b.width/2,y=b.y+b.height/2;await cdp.send("Input.dispatchTouchEvent",{type:"touchStart",touchPoints:[{x,y,id:1}]});await cdp.send("Input.dispatchTouchEvent",{type:"touchMove",touchPoints:[{x:x+55,y,id:1}]});await cdp.send("Input.dispatchTouchEvent",{type:"touchEnd",touchPoints:[]});assert.notEqual(await c.evaluate(c=>c.toDataURL()),before);await page.screenshot({path:"walk-"+viewport.width+".png"});
+const passage=await page.evaluate(()=>{const e=document.getElementById("lp-view").liveEdit.editor,s=e.walkScene(),rooms=LerikaRoomProject.apartmentSnapshot().rooms,hall=rooms.find(r=>r.id===1);return rooms.filter(r=>r.id!==1).map(r=>{const o=r.plan.openings[0],x=r.x+o.offset+o.w/2,z=hall.z+hall.plan.r.d/2,goal=r.z+r.plan.r.d/2,cam=e.walkMove(s,{x,z,yaw:0},goal-z,0);return {name:r.name,entered:cam.z>=r.z+110&&cam.z<=r.z+r.plan.r.d-110}})});
+assert.ok(passage.every(r=>r.entered),JSON.stringify(passage));await close();assert.deepEqual(await page.evaluate(()=>LerikaRoomProject.apartmentSnapshot()),fixture);assert.deepEqual(errors,[]);console.log("PASS "+viewport.width+"x"+viewport.height+": five rooms, four objects, full 3D view, rotation, walk, touch, four doors, unchanged project");await page.close();
+}
+}finally{await browser.close();server.close()}})().catch(e=>{console.error(e);server.close();process.exitCode=1});

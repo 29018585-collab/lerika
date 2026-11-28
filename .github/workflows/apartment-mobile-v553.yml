@@ -1,0 +1,28 @@
+name: V5.53 apartment mobile QA
+on:
+  push:
+    branches: [lerika-v553-apartment-view-qa]
+  pull_request:
+    branches: [lerika-cabinet-v1]
+permissions:
+  contents: read
+jobs:
+  apartment-mobile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-save playwright
+      - run: npx playwright install --with-deps chromium
+      - run: node tests/apartment-view-v553.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: apartment-mobile-v553
+          path: |
+            apartment-*.png
+            walk-*.png
+          if-no-files-found: ignore
