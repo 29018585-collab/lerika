@@ -1,0 +1,17 @@
+name: Telegram file intake QA
+on:
+  pull_request:
+    branches: [lerika-cabinet-v1]
+permissions:
+  contents: read
+jobs:
+  synthetic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax and isolated SQLite regression
+        working-directory: cabinet
+        run: |
+          python3 -m py_compile app.py telegram_core.py telegram_intake.py telegram_files.py
+          python3 -m unittest -v test_telegram_files_qa

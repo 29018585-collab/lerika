@@ -24,7 +24,7 @@ class StudioTests(unittest.TestCase):
     def setUp(self):
         self.client=app.test_client()
         with db() as c:
-            for table in ("client_requests","clients","client_limits","price_catalog","covers","files","design_briefs","request_numbers","design_requests","projects","attempts"):
+            for table in ("telegram_web_pending","telegram_web_links","telegram_test_subscriptions","telegram_test_files","telegram_test_drafts","telegram_pilot_pending","telegram_pilot_clients","telegram_test_owners","client_requests","clients","client_limits","price_catalog","covers","files","design_briefs","request_numbers","design_requests","projects","attempts"):
                 c.execute("DELETE FROM "+table)
     def data(self,rid=None):
         return dict(request_id=rid or secrets.token_hex(16),consent="yes",title="Тест кухни",room="Кухня",contact="test@example.invalid",brief="Пожелания: тест")
@@ -145,6 +145,57 @@ class StudioTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/client/login",json=d,headers=headers,base_url=ORIGIN).status_code,200)
         with db() as c:
             self.assertNotEqual(c.execute("SELECT password_hash FROM clients WHERE email=?",("a@example.invalid",)).fetchone()["password_hash"],d["password"])
+    def test_telegram_web_link_http_owner_scope(self):
+        import time
+        from unittest.mock import patch
+        from app import KEY
+        from telegram_core import secret_for
+        from telegram_client_pilot import JOIN,CONSENT
+        headers={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        env={"LERIKA_TG_CLIENT_PILOT":"1","LERIKA_TG_PILOT_CHAT_IDS":"123456,123457","LERIKA_TELEGRAM_ADMIN_CHAT_ID":"999999","LERIKA_TELEGRAM_BOT_TOKEN":""}
+        serial=123000
+        def web(action,client=None,**data):
+            return (client or self.client).post("/api/client/telegram-link",json={"action":action,**data},headers=headers,base_url=ORIGIN)
+        def tg(text,cid=123456):
+            nonlocal serial
+            serial+=1
+            r=app.test_client().post("/api/telegram/webhook",base_url=ORIGIN,headers={"X-Telegram-Bot-Api-Secret-Token":secret_for(KEY)},json={"update_id":serial,"message":{"date":int(time.time()),"chat":{"type":"private","id":cid},"from":{"id":cid,"is_bot":False},"text":text}})
+            self.assertEqual(r.status_code,200)
+            return r.json
+        def session(client=None):
+            return (client or self.client).get("/api/client/session",base_url=ORIGIN).json
+        with patch.dict(os.environ,env),patch("app.notify_telegram_order",return_value=True):
+            self.assertEqual(web("issue").status_code,401)
+            d={"name":"Test","email":"a@example.invalid","password":"long-test-password-123","consent":True}
+            self.assertEqual(self.client.post("/api/client/register",json=d,headers=headers,base_url=ORIGIN).status_code,201)
+            other=app.test_client()
+            self.assertEqual(other.post("/api/client/register",json={**d,"email":"b@example.invalid"},headers=headers,base_url=ORIGIN).status_code,201)
+            website_order=self.submit(self.data()).json["number"]
+            tg(JOIN);tg(CONSENT)
+            tg("/order_test synthetic cabinet")
+            with db() as c:
+                draft=c.execute("SELECT code FROM telegram_test_drafts").fetchone()["code"]
+            telegram_reply=tg("/confirm "+draft)["text"]
+            with db() as c:
+                row=c.execute("SELECT n.number FROM request_numbers n JOIN telegram_test_owners o ON o.request_id=n.request_id").fetchone()
+                telegram_number="L-"+str(row["number"]).zfill(6)
+            self.assertIn(telegram_number,telegram_reply)
+            self.assertNotIn(website_order,tg("📦 Мои заявки")["text"])
+            self.assertEqual({o["number"] for o in session()["orders"]},{website_order})
+            code=web("issue").json["code"]
+            self.assertNotIn("Второй код",tg("/link "+code,cid=123458)["text"])
+            proof=tg("/link "+code)["text"].rsplit(" ",1)[-1]
+            self.assertFalse(web("confirm",client=other,proof=proof).json["ok"])
+            self.assertTrue(web("confirm",proof=proof).json["ok"])
+            self.assertTrue(session()["telegram_linked"])
+            self.assertEqual({o["number"] for o in session()["orders"]},{website_order,telegram_number})
+            self.assertEqual(session(other)["orders"],[])
+            self.assertIn(website_order,tg("📦 Мои заявки")["text"])
+            self.assertTrue(web("unlink").json["ok"])
+            self.assertFalse(session()["telegram_linked"])
+            self.assertEqual({o["number"] for o in session()["orders"]},{website_order})
+            self.assertNotIn(website_order,tg("📦 Мои заявки")["text"])
+            self.assertIn(telegram_number,tg("📦 Мои заявки")["text"])
     def test_price_upload_validation_and_privacy(self):
         raw="Группа;Материал;Цена\nкорпус;ЛДСП;1200\nфасады;МДФ эмаль;2500\n".encode("utf-8")
         def upload(headers):
@@ -490,7 +541,13 @@ class StudioTests(unittest.TestCase):
                 self.assertEqual(im.format,"WEBP")
                 if f.name.startswith("public-kitchen-"):self.assertEqual(im.size,(1080,1400))
                 if f.name.startswith("public-stairs-"):self.assertEqual(im.size,(1080,1020))
-            self.assertTrue(f.name in (SITE_ROOT/"index.html").read_text())
+            # V5.37 removed the standalone configurator card; the content-addressed
+            # asset remains available for old links but must not be used by the showroom.
+            referenced = f.name in (SITE_ROOT/"index.html").read_text()
+            if f.name == "public-lab-config-3c29837353a0ee70.webp":
+                self.assertFalse(referenced)
+            else:
+                self.assertTrue(referenced, f.name)
         self.assertEqual(self.client.get("/showroom/public-unknown-0000000000000000.webp").headers["Cache-Control"],"no-store")
         self.assertLess((SITE_ROOT/"index.html").stat().st_size,500000)
         self.assertEqual(self.client.get("/api/projects").headers["Cache-Control"],"no-store")
