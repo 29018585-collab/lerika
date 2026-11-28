@@ -5,16 +5,18 @@ const html=fs.readFileSync("index.html"),server=http.createServer((req,res)=>{if
 for(const width of [320,360,384,390,480,600,768,1280]){
 const p=await browser.newPage({viewport:{width,height:844},hasTouch:width<721});
 const base="http://127.0.0.1:"+server.address().port+"/";
-await p.goto(base+"#home",{waitUntil:"domcontentloaded"});
+await p.clock.install();await p.goto(base+"#home",{waitUntil:"domcontentloaded"});
 await p.locator(".client-entry-link").waitFor({state:"visible"});
 assert.equal(await p.locator("#light-welcome").isVisible(),true);
-assert.match(await p.locator("#light-welcome").textContent(),/Нажмите на выключатель/);
+assert.match(await p.locator("#light-welcome").textContent(),/Добро пожаловать/);
 assert.ok(await p.locator("#light-welcome").evaluate(el=>el.getBoundingClientRect().top>=document.querySelector("#kitchen").getBoundingClientRect().bottom-1&&el.getBoundingClientRect().bottom<=document.querySelector(".slogan-zone h1").getBoundingClientRect().top+1&&el.scrollWidth<=el.clientWidth+1));
-await p.locator("#kitchen .switch").click();
-assert.equal(await p.locator("#kitchen .switch").getAttribute("aria-pressed"),"true");
-await p.locator("#kitchen .switch").click();
-assert.equal(await p.locator("#kitchen .switch").getAttribute("aria-pressed"),"false");
-console.log("PASS welcome and light toggle at "+width+"px");
+assert.equal(await p.locator("#kitchen .switch").count(),0);assert.equal(await p.locator("#kitchen").evaluate(e=>e.classList.contains("on")),false);await p.clock.fastForward(2300);assert.equal(await p.locator("#kitchen").evaluate(e=>e.classList.contains("on")),true);assert.equal(await p.locator("body").evaluate(e=>e.classList.contains("lights-on")),true);
+console.log("PASS automatic light at "+width+"px");
+assert.equal(await p.locator("#home-intro").isVisible(),true);assert.equal(await p.locator("#catalog-list").isVisible(),false);assert.equal(await p.locator(".categories .project:visible").count(),0);
+await p.getByRole("link",{name:"Смотреть проекты",exact:true}).click();
+await p.locator("#catalog-list").waitFor({state:"visible"});assert.equal(await p.locator("#home-intro").isVisible(),false);assert.equal(await p.locator("#kitchen").isVisible(),false);assert.equal(await p.locator(".categories .project:visible").count(),8);
+await p.locator("#project-1 .portfolio-open").click();await p.locator("#portfolio-1").waitFor({state:"visible"});await p.locator(".portfolio-back").click();await p.locator("#catalog-list").waitFor({state:"visible"});await p.evaluate(()=>location.hash="#home");await p.locator("#home-intro").waitFor({state:"visible"});assert.equal(await p.locator("#catalog-list").isVisible(),false);assert.equal(await p.locator("#kitchen").isVisible(),true);
+console.log("PASS V5.63 home/catalog separation and portfolio navigation at "+width+"px");
 const header=await p.evaluate(()=>{const box=s=>document.querySelector(s).getBoundingClientRect();const logo=box("header .header-mirror"),actions=box(".lerika-header-actions"),share=box("#lerika-share"),menu=box(".menu-button");return {logo:logo.width,ratio:logo.width/logo.height,clear:logo.right<=actions.left+1&&share.right<=menu.left+1&&menu.right<=innerWidth+1&&logo.left>=0}});
 assert.equal(header.logo,width<=360?96:width<=650?105:120);
 assert.ok(Math.abs(header.ratio-1.55)<.03,"logo ratio "+width);
@@ -54,6 +56,7 @@ if(innerWidth<=720)for(const t of root.querySelectorAll(".lp-table")){if(t.scrol
 return errors});
 assert.deepEqual(issues,[],width+"px "+route);if(width<=480&&route==="plan"){const rects=await p.locator("#lp-csv,#lp-local-save,#lp-local-load,#lp-studio,#le-from-plan").evaluateAll(bs=>bs.map(b=>({x:b.getBoundingClientRect().x,y:b.getBoundingClientRect().y,w:b.getBoundingClientRect().width})));assert.equal(new Set(rects.map(r=>Math.round(r.y))).size,5);assert.ok(rects.every(r=>r.w>200));}
 }
+if(width===390){await p.emulateMedia({reducedMotion:"reduce"});await p.goto(base+"#home",{waitUntil:"domcontentloaded"});await p.reload({waitUntil:"domcontentloaded"});assert.equal(await p.locator("#kitchen").evaluate(e=>e.classList.contains("on")),true);}
 await p.close();console.log("PASS responsive buttons and tables at "+width+"px");
 }
 }finally{await browser.close();server.close()}})().catch(e=>{console.error(e);server.close();process.exitCode=1});

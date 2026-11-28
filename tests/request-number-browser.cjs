@@ -37,7 +37,7 @@ const server=http.createServer((req,res)=>{
  assert.ok(decoded.every(v=>v[1]>0&&v[2]>0));assert.deepEqual(decoded.find(v=>v[0].startsWith("public-kitchen-")).slice(1),[1080,1400]);assert.deepEqual(decoded.find(v=>v[0].startsWith("public-stairs-")).slice(1),[1080,1020]);
  assert.equal(await p.locator("#kitchen img").count(),5);
  assert.equal(await p.locator("#kitchen .lit").evaluateAll(v=>new Set(v.map(x=>x.src)).size),1);
- await p.locator("#kitchen .switch").click();assert.equal(await p.locator("#kitchen").evaluate(e=>e.classList.contains("on")),true);
+ assert.equal(await p.locator("#kitchen .switch").count(),0);await p.waitForFunction(()=>document.getElementById("kitchen").classList.contains("on"));assert.equal(await p.locator("body").evaluate(e=>e.classList.contains("lights-on")),true);
  assert.deepEqual(errors,[]);
  console.log("PASS V5.23 actual admin search/filter/number, legacy lookup, publication guard, 16 decoded WebP assets and illumination");
 }finally{await b.close();server.close()}})().catch(e=>{console.error(e);server.close();process.exitCode=1});
