@@ -30,8 +30,13 @@ jobs:
           grep -Fq 'function panelProjection' /tmp/lerika-showroom.html
           grep -Fq 'new Float64Array(W*H)' /tmp/lerika-showroom.html
           grep -Fq 'function flushSave()' /tmp/lerika-showroom.html
-          grep -Fq 'ЛЕРИКА · V5.23' /tmp/lerika-showroom.html
+          grep -Fq 'ЛЕРИКА · V5.23.1' /tmp/lerika-showroom.html
           grep -Fq 'name="lerika-portfolio-api" content="/"' /tmp/lerika-showroom.html
+          for id in lz-add-item lz-item-pick lz-turn-left lz-turn-right lz-camera-left lz-camera-right lz-remove-item lz-mode lp-remove-view; do
+            grep -Fq "id=\"$id\"" /tmp/lerika-showroom.html
+          done
+          if grep -Fq 'data-lz-panel="rotation"' /tmp/lerika-showroom.html; then exit 1; fi
+          echo 'PASS: V5.23.1 unified room editor controls'
           test "$(wc -c </tmp/lerika-showroom.html)" -lt 500000
           echo "PASS: V5.21–V5.23 markers and reduced HTML: $(wc -c </tmp/lerika-showroom.html) bytes"
           check /showroom/public-kitchen-82efc7056beb5d38.webp 200
@@ -47,4 +52,4 @@ jobs:
           check /public/portfolio 200
           check /api/projects 401
           check /api/client/session 401
-          echo 'PASS: post-V5.23 live deployment read-only smoke; no customer submissions or authenticated writes'
+          echo 'PASS: post-V5.23.1 live deployment read-only smoke; no customer submissions or authenticated writes'
