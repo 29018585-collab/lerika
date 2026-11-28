@@ -335,11 +335,12 @@ def telegram_webhook():
     # Store only hashed chat identifiers and update IDs in the existing rate-limit table.
     # A Telegram retry is acknowledged without a repeated reply.
     digest=hmac.new(KEY.encode(),str(cid).encode(),hashlib.sha256).hexdigest()[:32]
+    is_admin=str(cid)==os.environ.get("LERIKA_TELEGRAM_ADMIN_CHAT_ID","").strip()
     try:
-        reserve_limits([("lerika-tg-update-"+str(uid),1,86400),("lerika-tg-global-minute",30,60),("lerika-tg-chat-"+digest,6,60)])
+        # A ten-photo album produces ten individual Telegram updates.
+        reserve_limits([("lerika-tg-update-"+str(uid),1,86400),("lerika-tg-global-minute",30,60),("lerika-tg-chat-"+digest,16 if is_admin else 6,60)])
     except TooManyRequests:
         return jsonify(ok=True)
-    is_admin=str(cid)==os.environ.get("LERIKA_TELEGRAM_ADMIN_CHAT_ID","").strip()
     def classify_preview(query):
         from ai_core import classify,fallback
         key=os.environ.get("LERIKA_GROQ_API_KEY","").strip()
