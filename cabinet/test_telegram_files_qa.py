@@ -17,8 +17,9 @@ class TelegramFileQA(unittest.TestCase):
         CREATE TABLE projects(id TEXT PRIMARY KEY,category INT,title TEXT,description TEXT,stage INT,status TEXT,published INT,updated INT);
         CREATE TABLE files(id TEXT PRIMARY KEY,project TEXT,stage INT,name TEXT,mime TEXT,image INT,public INT,data BLOB);
         CREATE TABLE design_briefs(project TEXT,brief TEXT);
-        CREATE TABLE design_requests(id TEXT,created INT);
-        CREATE TABLE request_numbers(number TEXT,request_id TEXT PRIMARY KEY);
+        CREATE TABLE design_requests(id TEXT PRIMARY KEY,created INT);
+        CREATE TABLE request_numbers(number INTEGER,request_id TEXT PRIMARY KEY);
+        CREATE TABLE telegram_test_owners(request_id TEXT PRIMARY KEY REFERENCES design_requests(id) ON DELETE CASCADE,chat_key TEXT NOT NULL);
         """)
         self.notices=[]
         self.key="k"*32
@@ -34,12 +35,13 @@ class TelegramFileQA(unittest.TestCase):
         c.execute("BEGIN IMMEDIATE")
     def existing(self,c,rid):
         row=c.execute("SELECT number FROM request_numbers WHERE request_id=?",(rid,)).fetchone()
-        return row["number"] if row else None
+        return "L-"+str(row["number"]).zfill(6) if row else None
     def allocate(self,c,rid):
-        c.execute("INSERT INTO request_numbers VALUES(?,?)",("L-000001",rid))
-        return "L-000001"
-    def order(self,text):
-        return handle_test_order(text,self.digest,self.key,self.db,self.lock,self.allocate,self.existing,lambda v:None,lambda *v:self.notices.append(v))
+        n=c.execute("SELECT COALESCE(MAX(number),0)+1 AS n FROM request_numbers").fetchone()["n"]
+        c.execute("INSERT INTO request_numbers VALUES(?,?)",(n,rid))
+        return "L-"+str(n).zfill(6)
+    def order(self,text,digest=None):
+        return handle_test_order(text,digest or self.digest,self.key,self.db,self.lock,self.allocate,self.existing,lambda v:None,lambda *v:self.notices.append(v))
     def code(self):
         return self.conn.execute("SELECT code FROM telegram_test_drafts").fetchone()["code"]
     def msg(self,name="test.pdf",raw=None):
@@ -129,6 +131,34 @@ class TelegramFileQA(unittest.TestCase):
         self.assertEqual(self.count("design_requests"),0)
         self.assertIsNone(self.order("🌐 Инструменты сайта"))
         self.assertIsNone(self.order("/ai synthetic question"))
+    def test_history_and_live_status_owner_scope(self):
+        self.assertIn("пока нет",self.order("📦 Мои заявки"))
+        self.order("/order_test synthetic cabinet")
+        code=self.code()
+        self.assertIn("L-000001",self.order("/confirm "+code))
+        self.assertIn("📦 Мои заявки",self.buttons())
+        self.assertIn("L-000001",self.order("📦 Мои заявки"))
+        self.assertIn("Исходное помещение",self.order("/status L-000001"))
+        self.assertNotIn("L-000001",self.order("/orders",digest="other"))
+        self.assertEqual(self.order("/status L-000001",digest="other"),self.order("/status L-999999"))
+        self.assertIn("формате",self.order("/status invalid"))
+        with self.conn:
+            self.conn.execute("UPDATE projects SET stage=3 WHERE id IN (SELECT request_id FROM telegram_test_owners)")
+        self.assertIn("3D-проект",self.order("/status L-000001"))
+        with self.conn:
+            self.conn.execute("UPDATE projects SET stage=6,status='ready'")
+        self.assertIn("Готово",self.order("/status L-000001"))
+        with self.conn:
+            self.conn.execute("DELETE FROM design_requests")
+        self.assertEqual(self.count("telegram_test_owners"),0)
+        self.assertIn("не найдена",self.order("/status L-000001"))
+    def test_history_does_not_consume_description(self):
+        self.order("➕ Новая тестовая заявка")
+        self.order("📦 Мои заявки")
+        self.order("/status L-000001")
+        row=self.conn.execute("SELECT brief FROM telegram_test_drafts").fetchone()
+        self.assertEqual(row["brief"],"")
+        self.assertIn("Описание сохранено",self.order("Тестовое описание"))
     def test_photo_and_path(self):
         spec=attachment_from_message({"photo":[{"file_size":3,"file_id":"small"},{"file_size":5,"file_id":"big","file_unique_id":"x"}]})
         self.assertEqual(spec[1:],("big",5))
