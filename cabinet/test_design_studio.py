@@ -170,6 +170,31 @@ class StudioTests(unittest.TestCase):
             self.assertEqual(c.execute("SELECT COUNT(*) AS n FROM client_order_messages").fetchone()["n"],0)
         self.assertEqual(self.client.get(url,base_url=ORIGIN).status_code,404)
 
+    def test_v571_private_client_cards(self):
+        headers={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        owner={"name":"Card QA","email":"cards@example.invalid","password":"long-test-password-123","consent":True}
+        self.assertEqual(self.client.post("/api/client/register",json=owner,headers=headers,base_url=ORIGIN).status_code,201)
+        first=self.submit(self.data()).json
+        other=app.test_client()
+        self.assertEqual(other.post("/api/client/register",json={**owner,"email":"other-cards@example.invalid"},headers=headers,base_url=ORIGIN).status_code,201)
+        self.assertEqual(self.client.get("/api/clients",base_url=ORIGIN).status_code,401)
+        guest=app.test_client()
+        guest_order=guest.post("/api/design-requests",data=self.data(),headers={"Origin":ORIGIN,"X-Lerika-Studio":"5.6"},base_url=ORIGIN,content_type="multipart/form-data")
+        self.assertEqual(guest_order.status_code,201)
+        admin=app.test_client()
+        h={"X-CSRF":admin.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN).json["csrf"]}
+        clients={r["email"]:r for r in admin.get("/api/clients",base_url=ORIGIN).json["clients"]}
+        self.assertEqual([o["id"] for o in clients[owner["email"]]["orders"]],[first["id"]])
+        self.assertEqual(clients["other-cards@example.invalid"]["orders"],[])
+        self.assertEqual(clients[owner["email"]]["orders"][0]["number"],first["number"])
+        self.assertNotIn("password_hash",clients[owner["email"]])
+        self.assertNotIn("chat_key",clients[owner["email"]]["orders"][0])
+        self.assertNotIn(guest_order.json["id"],[o["id"] for r in clients.values() for o in r["orders"]])
+        p=next(p for p in admin.get("/api/projects",base_url=ORIGIN).json["projects"] if p["id"]==first["id"])
+        self.assertEqual(admin.put("/api/projects/"+p["id"],json={**p,"stage":6,"status":"ready","published":False},headers=h,base_url=ORIGIN).status_code,200)
+        card=next(r for r in admin.get("/api/clients",base_url=ORIGIN).json["clients"] if r["email"]==owner["email"])
+        self.assertEqual((card["orders"][0]["stage"],card["orders"][0]["status"]),(6,"ready"))
+
     def test_v570_order_history_and_private_stage_photos(self):
         headers={"Origin":ORIGIN,"X-Lerika-Client":"1"}
         owner={"name":"History QA","email":"history@example.invalid","password":"long-test-password-123","consent":True}

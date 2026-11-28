@@ -954,7 +954,26 @@ def client_file(fid):
 @admin
 def clients_list():
     with db() as c:
-        rows=[dict(x) for x in c.execute("SELECT id,name,email,created FROM clients ORDER BY created DESC")]
+        rows=[dict(x) for x in c.execute("SELECT id,name,email,created FROM clients ORDER BY created DESC,id")]
+        by_id={x["id"]:x for x in rows}
+        for row in rows: row["orders"]=[]
+        from telegram_web_link import active_digests
+        allowed=active_digests(KEY,os.environ.get("LERIKA_TG_CLIENT_PILOT",""),os.environ.get("LERIKA_TG_PILOT_CHAT_IDS",""))
+        direct=c.execute("SELECT cr.client,p.id,p.title,p.stage,p.status,r.created,n.number FROM client_requests cr JOIN projects p ON p.id=cr.project JOIN design_requests r ON r.id=p.id LEFT JOIN request_numbers n ON n.request_id=r.id ORDER BY r.created DESC,p.id").fetchall()
+        def add(row):
+            item=dict(row)
+            target=by_id.get(item.pop("client"))
+            if not target: return
+            item.pop("chat_key",None)
+            item["number"]=request_number(item["number"]) if item["number"] is not None else item["id"][:12]
+            target["orders"].append(item)
+        for row in direct: add(row)
+        if allowed:
+            linked=c.execute("SELECT l.client,l.chat_key,p.id,p.title,p.stage,p.status,r.created,n.number FROM telegram_test_owners o JOIN telegram_web_links l ON l.chat_key=o.chat_key JOIN telegram_pilot_clients t ON t.chat_key=l.chat_key JOIN projects p ON p.id=o.request_id JOIN design_requests r ON r.id=p.id LEFT JOIN request_numbers n ON n.request_id=r.id WHERE p.published=0 AND NOT EXISTS (SELECT 1 FROM client_requests cr WHERE cr.project=p.id)").fetchall()
+            for row in linked:
+                if row["chat_key"] in allowed: add(row)
+        for row in rows:
+            row["orders"].sort(key=lambda o:(-o["created"],o["id"]))
     return jsonify(clients=rows)
 
 PRICE_MATERIALS={
