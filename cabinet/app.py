@@ -274,6 +274,37 @@ def qwen_connection_test():
 def ai_admin_status():
     return jsonify(model=LERIKA_AI_MODEL,configured=bool(os.environ.get("LERIKA_GROQ_API_KEY","").strip()),telegram_configured=bool(os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip() and os.environ.get("LERIKA_TELEGRAM_ADMIN_CHAT_ID","").strip()),rag=False,memory=False)
 
+@app.post("/api/admin/ai/access")
+@admin
+def ai_admin_access():
+    from urllib.error import HTTPError
+    if not valid_public_origin():
+        abort(403)
+    key=os.environ.get("LERIKA_GROQ_API_KEY","").strip()
+    if not key:
+        return jsonify(ok=False,message="Ключ Groq не настроен.")
+    reserve_limits([("lerika-ai-access-day",5,86400),("lerika-ai-access-minute",1,60)])
+    try:
+        req=Request("https://api.groq.com/openai/v1/models",headers={"Authorization":"Bearer "+key,"Accept":"application/json","User-Agent":"LERIKA-Groq-Diagnostic/1.0"},method="GET")
+        with urlopen(req,timeout=10) as res:
+            data=json.loads(res.read(262144))
+        models=data.get("data")
+        if not isinstance(models,list):
+            return jsonify(ok=False,message="Groq вернул неожиданный формат списка моделей.")
+        available=any(isinstance(m,dict) and m.get("id")==LERIKA_AI_MODEL for m in models)
+        return jsonify(ok=available,message="API Groq доступен. "+("Qwen присутствует в списке моделей." if available else "Qwen отсутствует в списке моделей."))
+    except HTTPError as exc:
+        content_type=exc.headers.get("Content-Type","").lower() if exc.headers else ""
+        edge=bool(exc.headers and exc.headers.get("cf-ray"))
+        result=groq_diagnostic_error(exc)
+        if "text/html" in content_type:
+            result+=" Ответ HTML, а не стандартный JSON API."
+        if edge:
+            result+=" Присутствует заголовок Cloudflare (сам по себе не доказывает блокировку)."
+        return jsonify(ok=False,message="Список моделей: "+result)
+    except Exception:
+        return jsonify(ok=False,message="Не удалось получить список моделей Groq.")
+
 @app.post("/api/admin/ai/test")
 @admin
 def ai_admin_test():
