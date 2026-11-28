@@ -177,7 +177,10 @@ def admin(f):
         if not session.get("admin") or time.time()-session.get("login",0)>43200:
             abort(401)
         if request.method not in ("GET","HEAD"):
-            if not secrets.compare_digest(request.headers.get("X-CSRF",""),session.get("csrf","!")):
+            supplied=request.headers.get("X-CSRF","")
+            if request.path=="/cabinet/ai-test" and request.method=="POST" and request.mimetype=="application/x-www-form-urlencoded" and valid_public_origin():
+                supplied=request.form.get("csrf","")
+            if not secrets.compare_digest(supplied,session.get("csrf","!")):
                 abort(403)
         return f(*a,**kw)
     return inner
@@ -210,6 +213,47 @@ def notify_telegram_order(number,source,room,attachment_count):
         app.logger.warning("Telegram notification failed; the order remains in the cabinet")
         return False
 
+
+LERIKA_AI_MODEL="qwen/qwen3.8-27b"
+
+def qwen_connection_test():
+    from urllib.error import HTTPError
+    key=os.environ.get("LERIKA_GROQ_API_KEY","").strip()
+    if not key:
+        return False,"Ключ Groq не настроен."
+    payload={"model":LERIKA_AI_MODEL,"messages":[{"role":"user","content":"Reply with exactly LERIKA_OK, no other text."}],"reasoning_effort":"none","temperature":0.2,"max_completion_tokens":64}
+    try:
+        req=Request("https://api.groq.com/openai/v1/chat/completions",data=json.dumps(payload).encode("utf-8"),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
+        with urlopen(req,timeout=12) as res:
+            data=json.loads(res.read(65536))
+        answer=data["choices"][0]["message"]["content"]
+        if isinstance(answer,str) and answer.strip()=="LERIKA_OK":
+            return True,"PASS: Qwen ответил LERIKA_OK."
+        return False,"Ответ от API получен, но контрольная фраза не совпала."
+    except HTTPError as exc:
+        # Never disclose provider error bodies or request credentials.
+        return False,"Groq HTTP "+str(exc.code)+"."
+    except Exception:
+        return False,"Не удалось получить корректный ответ от Groq."
+
+@app.route("/cabinet/ai-test",methods=["GET","POST"])
+@admin
+def ai_test_page():
+    from html import escape
+    result="Тест ещё не запускался."
+    configured=bool(os.environ.get("LERIKA_GROQ_API_KEY","").strip())
+    if request.method=="POST":
+        if not valid_public_origin():
+            abort(403)
+        if configured:
+            reserve_limits([("lerika-ai-test-global-day",3,86400),("lerika-ai-test-global-minute",1,60)])
+            ok,result=qwen_connection_test()
+        else:
+            result="Ключ Groq не настроен."
+    token=escape(str(session.get("csrf","")),quote=True)
+    state="Ключ настроен." if configured else "Ключ не настроен."
+    disabled="" if configured else " disabled"
+    return ('<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ЛериКа · Диагностика ИИ</title><link rel="stylesheet" href="/static/admin.css"></head><body><main><p><a href="/cabinet/">← В кабинет</a></p><section><h1>Диагностика Qwen</h1><p>Модель: '+LERIKA_AI_MODEL+'</p><p>'+state+'</p><p>Только контрольная фраза, без данных клиентов. До трёх запросов в сутки и одного в минуту. Запускайте только при активном бесплатном тарифе Groq.</p><form method="post" action="/cabinet/ai-test"><input type="hidden" name="csrf" value="'+token+'"><button class="primary" type="submit"'+disabled+'>Проверить Qwen</button></form><p role="status">'+escape(result)+'</p></section></main></body></html>')
 
 @app.get("/support/telegram")
 def support_telegram():
