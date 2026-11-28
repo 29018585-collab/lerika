@@ -490,7 +490,13 @@ class StudioTests(unittest.TestCase):
                 self.assertEqual(im.format,"WEBP")
                 if f.name.startswith("public-kitchen-"):self.assertEqual(im.size,(1080,1400))
                 if f.name.startswith("public-stairs-"):self.assertEqual(im.size,(1080,1020))
-            self.assertTrue(f.name in (SITE_ROOT/"index.html").read_text())
+            # V5.37 removed the standalone configurator card; the content-addressed
+            # asset remains available for old links but must not be used by the showroom.
+            referenced = f.name in (SITE_ROOT/"index.html").read_text()
+            if f.name == "public-lab-config-3c29837353a0ee70.webp":
+                self.assertFalse(referenced)
+            else:
+                self.assertTrue(referenced, f.name)
         self.assertEqual(self.client.get("/showroom/public-unknown-0000000000000000.webp").headers["Cache-Control"],"no-store")
         self.assertLess((SITE_ROOT/"index.html").stat().st_size,500000)
         self.assertEqual(self.client.get("/api/projects").headers["Cache-Control"],"no-store")
