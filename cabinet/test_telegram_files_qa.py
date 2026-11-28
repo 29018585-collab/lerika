@@ -8,6 +8,7 @@ import unittest
 from telegram_files import attachment_from_message, validate_bytes, receive_attachment, IntakeError, MAX_BYTES
 from telegram_intake import handle_test_order, pilot_keyboard
 from telegram_stage_notifications import preference,event_for_edit,deliver_event
+from telegram_client_pilot import allowed,enrolled,registration,registration_keyboard,notification_chat,digest_for,JOIN,CONSENT,LEAVE
 
 class TelegramFileQA(unittest.TestCase):
     def setUp(self):
@@ -24,6 +25,8 @@ class TelegramFileQA(unittest.TestCase):
         CREATE TABLE request_numbers(number INTEGER,request_id TEXT PRIMARY KEY);
         CREATE TABLE telegram_test_owners(request_id TEXT PRIMARY KEY REFERENCES design_requests(id) ON DELETE CASCADE,chat_key TEXT NOT NULL);
         CREATE TABLE telegram_test_subscriptions(chat_key TEXT PRIMARY KEY);
+        CREATE TABLE telegram_pilot_clients(chat_key TEXT PRIMARY KEY, created INTEGER NOT NULL);
+        CREATE TABLE telegram_pilot_pending(chat_key TEXT PRIMARY KEY, expires INTEGER NOT NULL);
         """)
         self.notices=[]
         self.key="k"*32
@@ -192,6 +195,51 @@ class TelegramFileQA(unittest.TestCase):
         self.assertFalse(deliver_event(event,self.key,cid,"synthetic",lambda *a:None))
         preference("/notify_off",self.digest,self.db,self.lock)
         self.assertIsNone(event_for_edit(self.conn,rid,old,4,"work"))
+    def test_pilot_access_and_consent(self):
+        self.assertFalse(allowed(123456,"","123456"))
+        self.assertFalse(allowed(123456,"1","123457"))
+        self.assertTrue(allowed(123456,"1","123456,123457"))
+        self.assertFalse(allowed(True,"1","1"))
+        self.assertNotIn(CONSENT,str(registration_keyboard()))
+        self.assertIn(CONSENT,str(registration_keyboard(True)))
+        digest=digest_for(self.key,123456)
+        registration(CONSENT,digest,self.db,self.lock,now=100)
+        self.assertFalse(enrolled(self.conn,digest))
+        registration(JOIN,digest,self.db,self.lock,now=100)
+        registration(CONSENT,digest,self.db,self.lock,now=1001)
+        self.assertFalse(enrolled(self.conn,digest))
+        registration(JOIN,digest,self.db,self.lock,now=1100)
+        registration(CONSENT,digest,self.db,self.lock,now=1101)
+        self.assertTrue(enrolled(self.conn,digest))
+        self.assertIn(LEAVE,str(pilot_keyboard(digest,self.db,self.lock,client=True)))
+    def test_two_pilot_owners_and_exit(self):
+        first,second=[digest_for(self.key,i) for i in (123456,123457)]
+        for digest in (first,second):
+            registration(JOIN,digest,self.db,self.lock)
+            registration(CONSENT,digest,self.db,self.lock)
+            self.order("/order_test synthetic cabinet",digest=digest)
+            code=self.conn.execute("SELECT code FROM telegram_test_drafts WHERE chat_key=?",(digest,)).fetchone()["code"]
+            self.order("/confirm "+code,digest=digest)
+            preference("/notify_on",digest,self.db,self.lock)
+        self.assertIn("L-000001",self.order("/orders",digest=first))
+        self.assertNotIn("L-000002",self.order("/orders",digest=first))
+        self.assertIn("L-000002",self.order("/orders",digest=second))
+        self.assertIn("недоступна",self.order("/status L-000001",digest=second))
+        rid=self.conn.execute("SELECT request_id FROM telegram_test_owners WHERE chat_key=?",(first,)).fetchone()["request_id"]
+        event=event_for_edit(self.conn,rid,{"stage":1,"status":"work"},3,"work")
+        self.assertEqual(notification_chat(self.conn,event,self.key,"999999","1","123456,123457"),"123456")
+        self.assertEqual(notification_chat(self.conn,event,self.key,"999999","1","123457"),"")
+        self.assertEqual(notification_chat(self.conn,event,self.key,"999999","0","123456"),"")
+        self.order("/order_test new synthetic draft",digest=first)
+        self.receive(digest=first)
+        registration(LEAVE,first,self.db,self.lock)
+        self.assertFalse(enrolled(self.conn,first))
+        self.assertTrue(enrolled(self.conn,second))
+        self.assertEqual(self.count("telegram_test_files"),0)
+        self.assertEqual(self.count("telegram_test_drafts"),0)
+        self.assertEqual(self.count("design_requests"),2)
+        self.assertIsNone(event_for_edit(self.conn,rid,{"stage":1,"status":"work"},3,"work"))
+        self.assertEqual(notification_chat(self.conn,event,self.key,"999999","1","123456,123457"),"")
     def test_photo_and_path(self):
         spec=attachment_from_message({"photo":[{"file_size":3,"file_id":"small"},{"file_size":5,"file_id":"big","file_unique_id":"x"}]})
         self.assertEqual(spec[1:],("big",5))
