@@ -4,7 +4,7 @@ const html=fs.readFileSync("index.html"),server=http.createServer((req,res)=>{if
 (async()=>{await new Promise(r=>server.listen(0,"127.0.0.1",r));const browser=await chromium.launch({headless:true});try{
 const page=await browser.newPage({viewport:{width:390,height:844},hasTouch:true,acceptDownloads:true});const errors=[];page.on("pageerror",e=>errors.push(e.message));
 await page.goto("http://127.0.0.1:"+server.address().port+"/#design-lab/engineering",{waitUntil:"domcontentloaded"});
-await page.locator("#le-view").waitFor({state:"visible"});assert.equal(await page.locator("#le-type option").count(),12);
+await page.locator("#le-view").waitFor({state:"visible"});assert.deepEqual((await page.locator("#le-type option").evaluateAll(opts=>opts.map(o=>o.value))).sort(),["wardrobe","coupe","coupeMirror","hall","kitchen","wallcab","sideboard","tv","bookcase","desk","table","bed","nightstand","bath"].sort());
 assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),"mobile overflow");
 for(const v of ["side","top","section","explode","front"])await page.locator('[data-le-view="'+v+'"]').click();
 
