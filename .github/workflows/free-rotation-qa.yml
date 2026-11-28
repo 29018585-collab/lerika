@@ -1,0 +1,16 @@
+name: Free rotation QA
+on:
+  pull_request:
+    branches: [lerika-v537-three-qa]
+permissions:
+  contents: read
+jobs:
+  rotation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: node tests/free_rotation_qa.cjs
+      - run: node tests/surface_placement_qa.cjs
+      - run: node tests/product_parameters_qa.cjs
+      - run: node tests/apartment_wizard_drag_qa.cjs
