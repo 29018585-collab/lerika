@@ -7,25 +7,38 @@ app = Flask(__name__, static_folder="static")
 ROOT = Path(__file__).resolve().parent.parent
 # Run the exact release candidate tests in a separate process with NO inherited
 # database configuration, tokens, credentials or production environment.
-import os, subprocess, sys
+import os, subprocess, sys, threading
+REGRESSION={"state":"pending","groups":{}}
 def run_isolated_regression():
     env={"PATH":os.environ.get("PATH","/usr/bin:/bin"),"LANG":"C.UTF-8","PYTHONUNBUFFERED":"1"}
-    try:
-        runner=subprocess.run([sys.executable,"-m","unittest","-v","test_telegram_files_qa","test_design_studio"],cwd=ROOT/"cabinet",env=env,capture_output=True,text=True,timeout=24)
-        log=runner.stdout+"\n"+runner.stderr
-        match=re.search(r"Ran (\d+) tests?",log)
-        result={"ok":runner.returncode==0,"tests":int(match.group(1)) if match else None,"exit":runner.returncode}
-        print("LERIKA_V549_QA "+str(result),flush=True)
-        if runner.returncode!=0:
-            print("LERIKA_V549_QA_FAILURE "+log[-6000:],flush=True)
-        return result
-    except subprocess.TimeoutExpired:
-        print("LERIKA_V549_QA_TIMEOUT",flush=True)
-        return {"ok":False,"error":"timeout"}
-    except Exception:
-        print("LERIKA_V549_QA_RUNNER_ERROR",flush=True)
-        return {"ok":False,"error":"runner"}
-REGRESSION=run_isolated_regression()
+    groups=[
+        ("telegram",["test_telegram_files_qa"]),
+        ("link_http",["test_design_studio.StudioTests.test_telegram_web_link_http_owner_scope"]),
+        ("cabinet",["test_design_studio"]),
+    ]
+    REGRESSION["state"]="running"
+    for label,tests in groups:
+        try:
+            runner=subprocess.run([sys.executable,"-m","unittest","-v",*tests],cwd=ROOT/"cabinet",env=env,capture_output=True,text=True,timeout=240)
+            log=runner.stdout+"\n"+runner.stderr
+            match=re.search(r"Ran (\d+) tests?",log)
+            result={"ok":runner.returncode==0,"tests":int(match.group(1)) if match else None,"exit":runner.returncode}
+            print("LERIKA_V550_QA "+label+" "+str(result),flush=True)
+            if runner.returncode!=0:
+                print("LERIKA_V550_QA_FAILURE "+label+" "+log[-8000:],flush=True)
+        except subprocess.TimeoutExpired as e:
+            result={"ok":False,"error":"timeout"}
+            print("LERIKA_V550_QA_TIMEOUT "+label,flush=True)
+            if e.stderr:
+                print("LERIKA_V550_QA_PARTIAL "+label+" "+str(e.stderr)[-2000:],flush=True)
+        except Exception:
+            result={"ok":False,"error":"runner"}
+            print("LERIKA_V550_QA_RUNNER_ERROR "+label,flush=True)
+        REGRESSION["groups"][label]=result
+    REGRESSION["state"]="completed"
+    REGRESSION["ok"]=all(r["ok"] for r in REGRESSION["groups"].values())
+    print("LERIKA_V550_QA_COMPLETE "+str(REGRESSION),flush=True)
+threading.Thread(target=run_isolated_regression,daemon=True,name="isolated-qa").start()
 
 
 @app.after_request
@@ -52,7 +65,7 @@ def showroom():
     html = html.replace("https://lerika-cabinet.onrender.com", "")
     html = re.sub(r'(<meta name="lerika-portfolio-api" content=")[^"]*(")', r'\1/\2', html, count=1)
     html = html.replace("</head>", '<meta name="robots" content="noindex,nofollow"><style>.qa-banner{background:#9e3f24;color:white;text-align:center;padding:8px;font:600 13px system-ui}.qa-banner a{color:white}</style></head>', 1)
-    html = re.sub(r"<body(?:\s[^>]*)?>", lambda m: m[0]+'<div class="qa-banner">ТЕСТОВАЯ ЛЕРИКА V5.49 QA · Three.js · заказы и кабинет отключены · только демонстрационные данные</div>', html, count=1)
+    html = re.sub(r"<body(?:\s[^>]*)?>", lambda m: m[0]+'<div class="qa-banner">ТЕСТОВАЯ ЛЕРИКА V5.50 QA · Three.js · заказы и кабинет отключены · только демонстрационные данные</div>', html, count=1)
     # Do not let this preview redirect to the live cabinet or another payment/account service.
     def hashes(tag):
         return " ".join("'sha256-"+base64.b64encode(hashlib.sha256(v.encode()).digest()).decode()+"'" for v in re.findall(r"<"+tag+r"\b[^>]*>([\s\S]*?)</"+tag+r">",html,re.I) if v)
