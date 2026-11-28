@@ -278,6 +278,84 @@ def qwen_connection_test():
 def ai_admin_status():
     return jsonify(model=LERIKA_AI_MODEL,configured=bool(os.environ.get("LERIKA_GROQ_API_KEY","").strip()),telegram_configured=bool(os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip() and os.environ.get("LERIKA_TELEGRAM_ADMIN_CHAT_ID","").strip()),rag=False,memory=False,core_version="1.0")
 
+@app.post("/api/admin/telegram/webhook")
+@admin
+def telegram_admin_webhook():
+    from telegram_core import PATH,bot_call,secret_for
+    if not valid_public_origin():
+        abort(403)
+    body=request.get_json(silent=True)
+    if not isinstance(body,dict) or body.get("action") not in ("status","activate","disable"):
+        abort(400)
+    token=os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip()
+    if not token or len(KEY)<32:
+        return jsonify(ok=False,message="Настройки Telegram неполные.")
+    reserve_limits([("lerika-tg-config-minute",3,60)])
+    target=PUBLIC_ORIGIN+PATH
+    info=bot_call(token,"getWebhookInfo")
+    if not isinstance(info,dict):
+        return jsonify(ok=False,message="Не удалось проверить Telegram API.")
+    current=info.get("url","")
+    if current and current!=target:
+        return jsonify(ok=False,message="У бота уже настроен другой webhook. Изменения не внесены.")
+    if body["action"]=="activate":
+        ok=bot_call(token,"setWebhook",{"url":target,"secret_token":secret_for(KEY),"allowed_updates":["message"],"max_connections":1,"drop_pending_updates":False})
+        if ok is not True:
+            return jsonify(ok=False,message="Telegram не подтвердил активацию.")
+    elif body["action"]=="disable" and current==target:
+        if bot_call(token,"deleteWebhook",{"drop_pending_updates":False}) is not True:
+            return jsonify(ok=False,message="Telegram не подтвердил отключение.")
+    info=bot_call(token,"getWebhookInfo")
+    if not isinstance(info,dict):
+        return jsonify(ok=False,message="Действие отправлено, итоговый статус не подтверждён.")
+    active=info.get("url")==target
+    pending=info.get("pending_update_count",0)
+    return jsonify(ok=True,active=active,message=("Webhook подключён." if active else "Webhook отключён.")+" В очереди: "+str(pending if type(pending) is int else 0)+".",delivery_warning=bool(info.get("last_error_date")))
+
+@app.post("/api/telegram/webhook")
+def telegram_webhook():
+    from telegram_core import secret_for,parse_update,answer_message
+    from werkzeug.exceptions import TooManyRequests
+    supplied=request.headers.get("X-Telegram-Bot-Api-Secret-Token","")
+    if len(KEY)<32 or not secrets.compare_digest(supplied,secret_for(KEY)):
+        abort(403)
+    if not request.is_json or request.content_length is None or request.content_length>65536:
+        abort(400)
+    parsed=parse_update(request.get_json(silent=True))
+    if parsed is None:
+        return jsonify(ok=True)
+    uid,cid,text=parsed
+    # Ignore stale deliveries rather than reply to an old conversation.
+    message=request.get_json()["message"]
+    stamp=message.get("date")
+    if type(stamp) is not int or not 0<=int(time.time())-stamp<=900:
+        return jsonify(ok=True)
+    # Store only hashed chat identifiers and update IDs in the existing rate-limit table.
+    # A Telegram retry is acknowledged without a repeated reply.
+    digest=hmac.new(KEY.encode(),str(cid).encode(),hashlib.sha256).hexdigest()[:32]
+    try:
+        reserve_limits([("lerika-tg-update-"+str(uid),1,86400),("lerika-tg-global-minute",30,60),("lerika-tg-chat-"+digest,6,60)])
+    except TooManyRequests:
+        return jsonify(ok=True)
+    is_admin=str(cid)==os.environ.get("LERIKA_TELEGRAM_ADMIN_CHAT_ID","").strip()
+    def classify_preview(query):
+        from ai_core import classify,fallback
+        key=os.environ.get("LERIKA_GROQ_API_KEY","").strip()
+        if not key:
+            return fallback()
+        try:
+            reserve_limits([("lerika-tg-ai-day",10,86400),("lerika-tg-ai-minute",1,60)])
+        except TooManyRequests:
+            return fallback()
+        return classify(query,key,LERIKA_AI_MODEL)
+    answer,markup=answer_message(text,PUBLIC_ORIGIN,is_admin,classify_preview if is_admin else None)
+    # Telegram can execute a Bot API method from the webhook response.
+    # This avoids another outbound request and never exposes the bot token.
+    result={"method":"sendMessage","chat_id":cid,"text":answer,"link_preview_options":{"is_disabled":True}}
+    if markup:
+        result["reply_markup"]=markup
+    return jsonify(result)
+
 @app.post("/api/admin/ai/assistant")
 @admin
 def ai_admin_assistant():
