@@ -1171,7 +1171,7 @@ function pickPlan(px,pz){if(!transform)return null;const x=(px-transform.ox)/tra
 function startPlan(px,pz){const id=pickPlan(px,pz);if(id===null)return false;loadItem(id);const a=current();drag={id,dx:(px-transform.ox)/transform.scale-a.x,dz:(pz-transform.oz)/transform.scale-a.z};draw();return true}
 function snapItem(a){if(!snapEnabled)return a;const m=P.model(a);if(!m)return a;const xs=[0,state.r.w-m.w],zs=[0,state.r.d-m.d];for(const v of state.items){if(v.id===a.id)continue;const n=P.model(v);if(!n)continue;xs.push(n.x,n.x+n.w,n.x-m.w,n.x+n.w-m.w);zs.push(n.z,n.z+n.d,n.z-m.d,n.z+n.d-m.d)}const nearest=(v,ls)=>ls.reduce((best,k)=>Math.abs(k-v)<Math.abs(best-v)?k:best,Infinity);const x=nearest(a.x,xs),z=nearest(a.z,zs);return {...a,x:Math.abs(x-a.x)<=40?Math.round(x):a.x,z:Math.abs(z-a.z)<=40?Math.round(z):a.z}}
 function movePlan(px,pz){if(!drag||!transform)return;const a=current();if(!a)return;const x=Math.round(((px-transform.ox)/transform.scale-drag.dx)/10)*10,z=Math.round(((pz-transform.oz)/transform.scale-drag.dz)/10)*10;trySpatial(snapItem({...a,x,z}))}
-view.liveEdit={editor:{walkScene,walkStart,walkMove,walkDraw,openings:()=>JSON.parse(JSON.stringify(state.openings)),setOpening,deleteOpening,connectRooms,apartmentCanvas,downloadApartment:async kind=>download(await blob(apartmentCanvas(kind)),"LERIKA-Apartment-"+kind+".png"),history:()=>({undo:history.length,redo:future.length}),undo:()=>historyStep(false),redo:()=>historyStep(true),snap:()=>snapEnabled,toggleSnap(){snapEnabled=!snapEnabled;return snapEnabled},moveGroup,roomTemplate,geometry:()=>JSON.parse(JSON.stringify(state.r)),updateRoomGeometry,ruler:()=>ruler,toggleRuler(){if(ruler){ruler=false;measure=[];draw()}else{setMode("2d");ruler=true;measure=[];draw()}return ruler},measurePoint,toggleOpen(){const a=current();if(!a||!P.model(a)?.canOpen)return false;if(openItems.has(a.id))openItems.delete(a.id);else openItems.add(a.id);setMode("3d");return true},openConstructor(){const a=current();if(!a||a.builtin||P.isAppliance(a.type))return false;return window.LerikaFurnitureEditor?.openRoom(JSON.parse(JSON.stringify(a)),activeRoom)},apartment:apartmentInfo,apartmentBridges:()=>{captureRoom();return apertureBridges(rooms)},buildApartmentDraft,applyApartmentDraft,restoreWizardBackup,stepRoom,switchRoom,addRoom,roomPosition,removeRoom,data:editorData,apply:editorApply,list:()=>state.items.map(a=>({id:a.id,name:P.name(a)})),select(id){if(!state.items.some(a=>a.id===id))return false;loadItem(id);refresh();return true},remove:removeSelected,copy(){const a=current();return a?addItem({...a,id:nextId(state.items)}):"Выберите изделие."},types:()=>Object.entries(P.catalog).map(([id,v])=>({id,name:v[0],group:Object.hasOwn(P.builtins,id)?"Встраиваемая техника":P.category(id)})),saved:()=>[...$("project-pick").options].filter(o=>o.value).map(o=>({id:o.value,name:o.textContent})),add(type){if(!Object.hasOwn(P.catalog,type))return "Выберите тип мебели.";return addItem(P.item(type,nextId(state.items)))},addSaved(id){const a=window.LerikaProject?.get(id);return a?addItem({...a,id:nextId(state.items),x:0,z:0}):"Сохранённое изделие не найдено."},mode:()=>mode,setMode(m){if(m==="2d"||m==="3d")setMode(m)},rotate(step){const a=current();return a?editorApply({rot:(a.rot+step+4)%4}):"Выберите изделие."},camera(step){if(mode!=="3d")setMode("3d");yaw+=step*Math.PI/2;draw()}},active:()=>true,start:(x,y)=>mode==="3d"?startSpatial(x,y):startPlan(x,y),move:(x,y)=>mode==="3d"?moveSpatial(x,y):movePlan(x,y),end:()=>stop(),action:turnSpatial,label:"Повернуть изделие",help:"Один палец — мебель; два — масштаб; пустое место — панорама.",pick:(x,y)=>mode==="3d"?spatial?.hit(x,y)??null:pickPlan(x,y)};
+view.liveEdit={editor:{walkScene,walkStart,walkMove,walkDraw,openings:()=>JSON.parse(JSON.stringify(state.openings)),setOpening,deleteOpening,connectRooms,apartmentCanvas,downloadApartment:async kind=>download(await blob(apartmentCanvas(kind)),"LERIKA-Apartment-"+kind+".png"),history:()=>({undo:history.length,redo:future.length}),undo:()=>historyStep(false),redo:()=>historyStep(true),snap:()=>snapEnabled,toggleSnap(){snapEnabled=!snapEnabled;return snapEnabled},moveGroup,roomTemplate,geometry:()=>JSON.parse(JSON.stringify(state.r)),updateRoomGeometry,ruler:()=>ruler,toggleRuler(){if(ruler){ruler=false;measure=[];draw()}else{setMode("2d");ruler=true;measure=[];draw()}return ruler},measurePoint,toggleOpen(){const a=current();if(!a||!P.model(a)?.canOpen)return false;if(openItems.has(a.id))openItems.delete(a.id);else openItems.add(a.id);setMode("3d");return true},openConstructor(){const a=current();if(!a||a.builtin||P.isAppliance(a.type))return false;return window.LerikaFurnitureEditor?.openRoom(JSON.parse(JSON.stringify(a)),activeRoom)},apartment:apartmentInfo,apartmentBridges:()=>{captureRoom();return apertureBridges(rooms)},buildApartmentDraft,manualApartmentDraft,applyApartmentDraft,restoreWizardBackup,stepRoom,switchRoom,addRoom,roomPosition,removeRoom,data:editorData,apply:editorApply,list:()=>state.items.map(a=>({id:a.id,name:P.name(a)})),select(id){if(!state.items.some(a=>a.id===id))return false;loadItem(id);refresh();return true},remove:removeSelected,copy(){const a=current();return a?addItem({...a,id:nextId(state.items)}):"Выберите изделие."},types:()=>Object.entries(P.catalog).map(([id,v])=>({id,name:v[0],group:Object.hasOwn(P.builtins,id)?"Встраиваемая техника":P.category(id)})),saved:()=>[...$("project-pick").options].filter(o=>o.value).map(o=>({id:o.value,name:o.textContent})),add(type){if(!Object.hasOwn(P.catalog,type))return "Выберите тип мебели.";return addItem(P.item(type,nextId(state.items)))},addSaved(id){const a=window.LerikaProject?.get(id);return a?addItem({...a,id:nextId(state.items),x:0,z:0}):"Сохранённое изделие не найдено."},mode:()=>mode,setMode(m){if(m==="2d"||m==="3d")setMode(m)},rotate(step){const a=current();return a?editorApply({rot:(a.rot+step+4)%4}):"Выберите изделие."},camera(step){if(mode!=="3d")setMode("3d");yaw+=step*Math.PI/2;draw()}},active:()=>true,start:(x,y)=>mode==="3d"?startSpatial(x,y):startPlan(x,y),move:(x,y)=>mode==="3d"?moveSpatial(x,y):movePlan(x,y),end:()=>stop(),action:turnSpatial,label:"Повернуть изделие",help:"Один палец — мебель; два — масштаб; пустое место — панорама.",pick:(x,y)=>mode==="3d"?spatial?.hit(x,y)??null:pickPlan(x,y)};
 view.addEventListener("pointerdown",e=>{if(e.button!==0||drag)return;if(mode==="3d"){if(startSpatial(...pointer(e))){drag.pointerId=e.pointerId;view.setPointerCapture(e.pointerId)}return}if(!transform)return;const [px,pz]=pointer(e),x=(px-transform.ox)/transform.scale,z=(pz-transform.oz)/transform.scale;const hit=[...transform.models].reverse().find(m=>x>=m.x&&x<=m.x+m.w&&z>=m.z&&z<=m.z+m.d);if(!hit)return;loadItem(hit.item.id);drag={id:hit.item.id,dx:x-hit.x,dz:z-hit.z,pointerId:e.pointerId};view.setPointerCapture(e.pointerId);draw()});
 view.addEventListener("pointermove",e=>{if(!drag)return;if(drag.spatial){if(drag.pointerId===e.pointerId)moveSpatial(...pointer(e));return}if(!transform||drag.pointerId!==e.pointerId)return;const [px,pz]=pointer(e),a=current(),m=P.model(a);if(!m)return;const x=Math.round(((px-transform.ox)/transform.scale-drag.dx)/10)*10,z=Math.round(((pz-transform.oz)/transform.scale-drag.dz)/10)*10;trySpatial({...a,x,z})});
 function stop(e){if(!drag||e&&drag.pointerId!==undefined&&drag.pointerId!==e.pointerId)return;drag=null;loadItem(selected);refresh()}view.addEventListener("pointerup",stop);view.addEventListener("pointercancel",stop);view.addEventListener("lostpointercapture",stop);
@@ -1219,8 +1219,46 @@ function buildApartmentDraft(spec){
  for(const a of list)a.z-=minZ;
  return {rooms:list,activeRoom:2,length,area:list.reduce((s,a)=>s+a.plan.r.w*a.plan.r.d,0)/1e6};
 }
-function applyApartmentDraft(spec){
- const draft=buildApartmentDraft(spec);if(draft.error)return draft.error;
+// Manual wizard edits are validated against the original dimensional specification.
+function manualApartmentDraft(spec,layout,doorOffsets={}){
+ const base=buildApartmentDraft(spec);if(base.error||!layout)return base;
+ if(!Array.isArray(layout)||layout.length!==base.rooms.length||new Set(layout.map(v=>v.id)).size!==layout.length)return {error:"Некорректный ручной план."};
+ const list=base.rooms.map(r=>{
+  const v=layout.find(a=>a.id===r.id);if(!v||![v.x,v.z].every(n=>Number.isSafeInteger(n)&&Math.abs(n)<=1000000)||typeof v.rot!=="boolean")return null;
+  const q=r.plan.r,w=v.rot?q.d:q.w,d=v.rot?q.w:q.d;
+  return {...r,x:v.x,z:v.z,plan:{r:{...q,w,d},items:[],openings:[]}};
+ });
+ if(list.some(r=>!r))return {error:"Некорректные координаты помещений."};
+ for(let i=0;i<list.length;i++)for(const b of list.slice(i+1)){
+  const a=list[i],ar=a.plan.r,br=b.plan.r,dx=Math.max(b.x-a.x-ar.w,a.x-b.x-br.w),dz=Math.max(b.z-a.z-ar.d,a.z-b.z-br.d);
+  // Wall thickness is measured outside the internal room dimensions.
+  if((dx<spec.partition&&dz<0)||(dz<spec.partition&&dx<0))return {error:"Помещения или перегородки пересекаются."};
+ }
+ const edges=[];
+ for(let i=0;i<list.length;i++)for(const b of list.slice(i+1)){
+  const a=list[i];
+  for(const p of sharedWall(a,b)){
+   if(p.gap!==spec.partition||p.end-p.start<spec.doorWidth+200)continue;
+   edges.push({a,b,p,key:a.id+"-"+b.id+"-"+p.aw});
+  }
+ }
+ edges.sort((u,v)=>Number(v.a.id===1||v.b.id===1)-Number(u.a.id===1||u.b.id===1)||(v.p.end-v.p.start)-(u.p.end-u.p.start));
+ const parent=new Map(list.map(r=>[r.id,r.id])),find=id=>{while(parent.get(id)!==id)id=parent.get(id);return id};
+ const links=[];
+ for(const {a,b,p,key} of edges){
+  if(find(a.id)===find(b.id))continue;
+  const span=p.end-p.start-spec.doorWidth-200,offset=Number.isSafeInteger(doorOffsets[key])?Math.min(span,Math.max(0,doorOffsets[key])):Math.round(span/2),start=p.start+100+offset;
+  const door=(r,wall,off)=>({id:r.plan.openings.length+1,type:"door",wall,offset:off,w:spec.doorWidth,h:Math.min(2100,spec.height),sill:0,hinge:"start"});
+  const ad=door(a,p.aw,start-p.ao),bd=door(b,p.bw,start-p.bo);
+  if(!P.inspect(a.plan.r,[],[...a.plan.openings,ad]).ok||!P.inspect(b.plan.r,[],[...b.plan.openings,bd]).ok)continue;
+  a.plan.openings.push(ad);b.plan.openings.push(bd);parent.set(find(a.id),find(b.id));
+  links.push({key,a:a.name,b:b.name,offset,max:span});
+ }
+ const connected=list.every(r=>find(r.id)===find(1));
+ return {...base,rooms:list,links,warning:connected?"":"Не все помещения соединены дверями. Придвиньте комнаты к соседней стене.",connected};
+}
+function applyApartmentDraft(spec,layout,doorOffsets){
+ const draft=manualApartmentDraft(spec,layout,doorOffsets);if(draft.error||draft.warning)return draft.error||draft.warning;
  const old=serialized();
  try{localStorage.setItem(autoStore+"-before-wizard",old)}catch(e){return "Не удалось сохранить резервную копию. Скачайте проект или освободите память браузера."}
  captureRoom();recordHistory();
@@ -1452,7 +1490,10 @@ function renderApartmentWizard(root,ed,trigger){
  const list=make("div");list.className="lz-wizard-rooms";root.append(list);
  const rows=[],types=[["Комната","Комната"],["Спальня","Спальня"],["Гостиная","Гостиная"],["Кухня","Кухня"],["Ванная","Ванная"],["Туалет","Туалет"],["Гардеробная","Гардеробная"],["Кладовая","Кладовая"],["Балкон","Балкон"],["Другое","Другое"]];
  function button(label,fn,parent=root){const b=make("button",label);b.type="button";b.className="lz-btn";b.onclick=fn;parent.append(b);return b}
- const canvas=make("canvas");canvas.width=700;canvas.height=420;canvas.style.cssText="width:100%;height:auto;background:#e8dfd1;border-radius:8px";const status=make("p");status.setAttribute("role","status");let valid=null;
+ const canvas=make("canvas");canvas.width=700;canvas.height=420;canvas.style.cssText="width:100%;height:auto;background:#e8dfd1;border-radius:8px;touch-action:none;cursor:grab";const status=make("p");status.setAttribute("role","status");
+ let valid=null,layout=null,doorOffsets={},signature="",selectedId=2,viewBox=null,zoom=1,panX=0,panZ=0,gesture=null,blocked="",snapOn=true;const pointers=new Map();
+ const controls=make("div");controls.className="lz-fields";
+ const selectedLabel=make("p","Выберите помещение на плане"),doorFields=make("div");doorFields.className="lz-fields";
  function add(name="Комната",w=3500,d=3000,kind="Комната"){
   if(rows.length>=7){say("До 7 помещений и коридор.");return}
   const wrap=make("section");wrap.className="lz-wizard-room";const top=make("div");top.className="lz-wizard-title";const title=make("strong",name);top.append(title);wrap.append(top);
@@ -1462,15 +1503,84 @@ function renderApartmentWizard(root,ed,trigger){
   nm.addEventListener("input",()=>title.textContent=nm.value);for(const i of [nm,rw,rd,side])i.addEventListener("input",preview);
  }
  function spec(){const n=i=>i.value.trim()===""?NaN:Number(i.value);return {height:n(h),partition:n(th),corridorDepth:n(cd),corridorLength:n(cl),doorWidth:n(dw),rooms:rows.map(r=>({name:r.nm.value,w:n(r.rw),d:n(r.rd),side:r.side.value}))}}
+ function snapshot(draft){return draft.rooms.map(r=>({id:r.id,x:r.x,z:r.z,rot:false}))}
  function preview(){
-  const draft=ed.buildApartmentDraft(spec());valid=draft.error?null:draft;const g=canvas.getContext("2d");g.fillStyle="#e8dfd1";g.fillRect(0,0,700,420);
+  const cfg=spec(),sig=JSON.stringify(cfg);
+  if(signature!==sig){layout=null;doorOffsets={};signature=sig;zoom=1;panX=panZ=0;blocked=""}
+  const draft=ed.manualApartmentDraft(cfg,layout,doorOffsets);valid=draft.error?null:draft;
+  const g=canvas.getContext("2d");g.fillStyle="#e8dfd1";g.fillRect(0,0,700,420);
   if(!valid){say(draft.error);apply.disabled=true;return}
-  const rr=draft.rooms,P=window.LerikaRoomPlanner,maxX=Math.max(...rr.map(r=>r.x+r.plan.r.w)),maxZ=Math.max(...rr.map(r=>r.z+r.plan.r.d)),s=Math.min(650/maxX,370/maxZ),X=x=>25+x*s,Z=z=>25+z*s;
-  for(const r of rr){const q=r.plan.r;g.fillStyle=r.id===1?"#e0cba6":"#fbf5eb";g.fillRect(X(r.x),Z(r.z),q.w*s,q.d*s);for(const b of P.roomBoxes(q,r.plan.openings,0,true)){if(b.y!==0||b.b<100)continue;g.fillStyle="#55453b";g.fillRect(X(r.x+b.x),Z(r.z+b.z),b.a*s,b.c*s)}g.fillStyle="#302820";g.textAlign="center";g.font="bold 14px system-ui";g.fillText(r.name,X(r.x+q.w/2),Z(r.z+q.d/2)-5,Math.max(15,q.w*s-8));g.font="12px system-ui";g.fillText(q.w+" × "+q.d,X(r.x+q.w/2),Z(r.z+q.d/2)+11,Math.max(15,q.w*s-8))}
-  say("Помещений: "+rr.length+" · площадь "+draft.area.toFixed(2)+" м² · коридор "+draft.length+" × "+spec().corridorDepth+" мм.");apply.disabled=false;
+  if(!gesture||!viewBox){
+   const rr=draft.rooms,minX=Math.min(...rr.map(r=>r.x)),minZ=Math.min(...rr.map(r=>r.z)),maxX=Math.max(...rr.map(r=>r.x+r.plan.r.w)),maxZ=Math.max(...rr.map(r=>r.z+r.plan.r.d)),scale=Math.min(620/(maxX-minX),340/(maxZ-minZ))*zoom;
+   viewBox={scale,ox:350-(maxX+minX)*scale/2+panX,oz:210-(maxZ+minZ)*scale/2+panZ};
+  }
+  paint();
+  const r=draft.rooms.find(r=>r.id===selectedId);
+  selectedLabel.textContent=r?"Выбрано: "+r.name+" · "+r.plan.r.w+" × "+r.plan.r.d+" мм":"Выберите помещение на плане";
+  rotate.disabled=!r;
+  doorFields.replaceChildren();
+  if(!gesture&&draft.links?.length){
+   for(const link of draft.links){
+    const l=make("label",link.a+" ↔ "+link.b+" · отступ двери, мм"),input=make("input");input.type="number";input.min="0";input.max=String(link.max);input.step="10";input.value=String(link.offset);input.onchange=()=>{const v=Number(input.value);if(Number.isSafeInteger(v)&&v>=0&&v<=link.max){doorOffsets[link.key]=v;preview()}else input.value=String(link.offset)};l.append(input);doorFields.append(l);
+   }
+  }
+  say(blocked||draft.warning||("Помещений: "+draft.rooms.length+" · площадь "+draft.area.toFixed(2)+" м² · коридор "+draft.length+" × "+cfg.corridorDepth+" мм."));
+  apply.disabled=!!draft.warning;
  }
- button("+ Добавить помещение",()=>{add("Комната "+(rows.length+1));preview()});root.append(make("strong","Предпросмотр общего плана"),canvas,status);
- const apply=button("Создать квартиру",()=>{if(!valid||!confirm("Создать новый план? Текущая квартира будет заменена, но сохранится резервная копия и возможность отмены."))return;const err=ed.applyApartmentDraft(spec());if(err){say(err);return}reset();draw();showSheet("apartment",trigger)});
+ function paint(){
+  if(!valid||!viewBox)return;const g=canvas.getContext("2d"),P=window.LerikaRoomPlanner,{scale:s,ox,oz}=viewBox,X=x=>ox+x*s,Z=z=>oz+z*s;
+  g.fillStyle="#e8dfd1";g.fillRect(0,0,700,420);
+  for(const r of valid.rooms){const q=r.plan.r;g.fillStyle=r.id===1?"#e0cba6":"#fbf5eb";g.fillRect(X(r.x),Z(r.z),q.w*s,q.d*s);for(const b of P.roomBoxes(q,r.plan.openings,0,true)){if(b.y!==0||b.b<100)continue;g.fillStyle="#55453b";g.fillRect(X(r.x+b.x),Z(r.z+b.z),b.a*s,b.c*s)}if(r.id===selectedId){g.strokeStyle="#b57826";g.lineWidth=3;g.strokeRect(X(r.x),Z(r.z),q.w*s,q.d*s)}g.fillStyle="#302820";g.textAlign="center";g.font="bold 14px system-ui";g.fillText(r.name,X(r.x+q.w/2),Z(r.z+q.d/2)-5,Math.max(15,q.w*s-8));g.font="12px system-ui";g.fillText(q.w+" × "+q.d,X(r.x+q.w/2),Z(r.z+q.d/2)+11,Math.max(15,q.w*s-8))}
+ }
+ function propose(id,x,z,turn=false){
+  if(!valid)return false;const cfg=spec(),r=valid.rooms.find(a=>a.id===id);if(!r)return false;
+  const old=layout||snapshot(valid),entry=old.find(a=>a.id===id),q=r.plan.r,w=turn?q.d:q.w,d=turn?q.w:q.d;
+  x=Math.round(x/10)*10;z=Math.round(z/10)*10;
+  if(snapOn&&!turn){
+   const gap=cfg.partition,threshold=Math.min(350,22/viewBox.scale),xs=[x],zs=[z];
+   for(const b of valid.rooms.filter(a=>a.id!==id)){const t=b.plan.r;xs.push(b.x-w-gap,b.x+t.w+gap,b.x,b.x+t.w-w);zs.push(b.z-d-gap,b.z+t.d+gap,b.z,b.z+t.d-d)}
+   const candidates=(arr,v)=>[...new Set(arr.filter(n=>Math.abs(n-v)<=threshold))].sort((a,b)=>Math.abs(a-v)-Math.abs(b-v));
+   // Prefer exact wall/edge alignment when within the touch threshold.
+   const ax=candidates(xs.slice(1),x),az=candidates(zs.slice(1),z);
+   const attempts=[...(ax.length&&az.length?[[ax[0],az[0]]]:[]),...(ax.length?[[ax[0],z]]:[]),...(az.length?[[x,az[0]]]:[]),[x,z]];
+   for(const [nx,nz] of attempts){if(commit(nx,nz))return true}
+  }else if(commit(x,z))return true;
+  blocked="Пересечение помещений. Выберите свободное место.";say(blocked);return false;
+  function commit(nx,nz){
+   const next=old.map(a=>a.id===id?{...a,x:nx,z:nz,rot:turn?!entry.rot:entry.rot}:a),draft=ed.manualApartmentDraft(cfg,next,doorOffsets);
+   if(draft.error)return false;
+   layout=next;valid=draft;blocked="";paint();apply.disabled=!!draft.warning;return true;
+  }
+ }
+ const pt=e=>{const b=canvas.getBoundingClientRect();return {x:(e.clientX-b.left)*700/b.width,z:(e.clientY-b.top)*420/b.height}};
+ const distance=(a,b)=>Math.hypot(a.x-b.x,a.z-b.z);
+ canvas.onpointerdown=e=>{
+  if(!valid||!viewBox||e.button!==0)return;e.preventDefault();const p=pt(e);pointers.set(e.pointerId,p);canvas.setPointerCapture(e.pointerId);
+  if(pointers.size===2){const [a,b]=[...pointers.values()];gesture={kind:"pinch",distance:Math.max(1,distance(a,b)),scale:viewBox.scale,zoom,ox:viewBox.ox,oz:viewBox.oz,cx:(a.x+b.x)/2,cz:(a.z+b.z)/2};return}
+  if(pointers.size!==1)return;
+  const {scale,ox,oz}=viewBox,x=(p.x-ox)/scale,z=(p.z-oz)/scale,r=[...valid.rooms].reverse().find(a=>x>=a.x&&x<=a.x+a.plan.r.w&&z>=a.z&&z<=a.z+a.plan.r.d);
+  if(r){selectedId=r.id;gesture={kind:"room",id:r.id,dx:x-r.x,dz:z-r.z};selectedLabel.textContent="Выбрано: "+r.name;paint()}
+  else gesture={kind:"pan",p,ox,oz};
+ };
+ canvas.onpointermove=e=>{
+  if(!pointers.has(e.pointerId)||!gesture)return;e.preventDefault();const p=pt(e);pointers.set(e.pointerId,p);
+  if(gesture.kind==="pinch"&&pointers.size===2){const [a,b]=[...pointers.values()],k=Math.max(.5/gesture.zoom,Math.min(4/gesture.zoom,distance(a,b)/gesture.distance));zoom=gesture.zoom*k;viewBox={scale:gesture.scale*k,ox:(a.x+b.x)/2+(gesture.ox-gesture.cx)*k,oz:(a.z+b.z)/2+(gesture.oz-gesture.cz)*k};paint()}
+  else if(gesture.kind==="room"&&pointers.size===1){const {scale,ox,oz}=viewBox;propose(gesture.id,(p.x-ox)/scale-gesture.dx,(p.z-oz)/scale-gesture.dz)}
+  else if(gesture.kind==="pan"&&pointers.size===1){viewBox.ox=gesture.ox+p.x-gesture.p.x;viewBox.oz=gesture.oz+p.z-gesture.p.z;paint()}
+ };
+ function endPointer(e){if(!pointers.has(e.pointerId))return;pointers.delete(e.pointerId);if(pointers.size)return;
+  if(valid&&viewBox){const rr=valid.rooms,minX=Math.min(...rr.map(r=>r.x)),maxX=Math.max(...rr.map(r=>r.x+r.plan.r.w)),minZ=Math.min(...rr.map(r=>r.z)),maxZ=Math.max(...rr.map(r=>r.z+r.plan.r.d));const base=Math.min(620/(maxX-minX),340/(maxZ-minZ));zoom=Math.max(.5,Math.min(4,viewBox.scale/base));panX=viewBox.ox-350+(minX+maxX)*base*zoom/2;panZ=viewBox.oz-210+(minZ+maxZ)*base*zoom/2}
+  gesture=null;preview();
+ }
+ canvas.onpointerup=canvas.onpointercancel=canvas.onlostpointercapture=endPointer;
+ button("+ Добавить помещение",()=>{add("Комната "+(rows.length+1));preview()});root.append(make("strong","Предпросмотр общего плана"),make("small","Перетащите комнату пальцем. Два пальца — масштаб, пустое место — перемещение плана. Размеры задаются выше."),canvas,selectedLabel,controls);
+ const rotate=button("⟳ Повернуть на 90°",()=>{const r=valid?.rooms.find(a=>a.id===selectedId);if(r&&propose(r.id,r.x,r.z,true))preview()},controls);
+ const snapButton=button("Привязка: вкл.",()=>{snapOn=!snapOn;snapButton.textContent=snapOn?"Привязка: вкл.":"Привязка: выкл."},controls);
+ button("Автоматическая расстановка",()=>{layout=null;doorOffsets={};zoom=1;panX=panZ=0;blocked="";preview()},controls);
+ button("Вместить план",()=>{zoom=1;panX=panZ=0;preview()},controls);
+ button("Увеличить +",()=>{zoom=Math.min(4,zoom*1.25);preview()},controls);button("Уменьшить −",()=>{zoom=Math.max(.5,zoom/1.25);preview()},controls);
+ root.append(doorFields,status);
+ const apply=button("Создать квартиру",()=>{if(!valid||valid.warning||!confirm("Создать новый план? Текущая квартира будет заменена, но сохранится резервная копия и возможность отмены."))return;const err=ed.applyApartmentDraft(spec(),layout,doorOffsets);if(err){say(err);return}reset();draw();showSheet("apartment",trigger)});
  for(const i of [h,th,cd,cl,dw])i.addEventListener("input",preview);
  add("Комната 1",4000,3500);add("Комната 2",3500,3000);add("Кухня",3500,3000,"Кухня");add("Ванная",2400,2200,"Ванная");preview();
 }
