@@ -1,0 +1,13 @@
+name: Apartment wizard drag QA
+on:
+  pull_request:
+    branches: [lerika-v537-three-qa]
+permissions:
+  contents: read
+jobs:
+  geometry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: node tests/apartment_wizard_drag_qa.cjs
