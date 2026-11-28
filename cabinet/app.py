@@ -125,6 +125,7 @@ if not SETUP_REQUIRED:
     CREATE INDEX IF NOT EXISTS telegram_test_owners_chat ON telegram_test_owners(chat_key);
     CREATE TABLE IF NOT EXISTS telegram_test_subscriptions(chat_key TEXT PRIMARY KEY);
     CREATE TABLE IF NOT EXISTS telegram_pilot_clients(chat_key TEXT PRIMARY KEY, created INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS telegram_pilot_pending(chat_key TEXT PRIMARY KEY, expires INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS request_sequence(id INTEGER PRIMARY KEY CHECK(id=1), last_number INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS design_briefs(project TEXT PRIMARY KEY REFERENCES projects(id), brief TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS clients(id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, password_hash TEXT NOT NULL, created INTEGER NOT NULL);
@@ -368,6 +369,9 @@ def telegram_webhook():
         except Exception:
             app.logger.warning("Telegram client pilot registration unavailable")
             return jsonify(method="sendMessage",chat_id=cid,text="Тестовая регистрация временно недоступна.")
+        if not registered and text=="🌐 Инструменты сайта":
+            answer,markup=answer_message(text,PUBLIC_ORIGIN,False,None)
+            return jsonify(method="sendMessage",chat_id=cid,text=answer,reply_markup=markup)
         if registration_reply is not None or not registered:
             from telegram_intake import pilot_keyboard
             markup=pilot_keyboard(digest,db,lock,client=True) if registered else registration_keyboard(show_consent=text==JOIN)
