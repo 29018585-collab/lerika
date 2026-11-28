@@ -3,7 +3,7 @@ const {chromium}=require("playwright"),assert=require("node:assert/strict"),fs=r
 const html=fs.readFileSync("index.html");
 const server=http.createServer((req,res)=>{if(req.url==="/"){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(html)}else{res.writeHead(404);res.end()}});
 (async()=>{await new Promise(r=>server.listen(0,"127.0.0.1",r));const browser=await chromium.launch({headless:true});try{
-const page=await browser.newPage({viewport:{width:390,height:844},deviceScaleFactor:1,hasTouch:true,acceptDownloads:true});const errors=[];page.on("pageerror",e=>errors.push(e.message));page.on("dialog",d=>d.accept());
+const page=await browser.newPage({viewport:{width:390,height:844},deviceScaleFactor:1,hasTouch:true,acceptDownloads:true});const errors=[];page.on("pageerror",e=>errors.push(e.message));let rejectDelete=false;page.on("dialog",d=>rejectDelete?d.dismiss():d.accept());
 await page.goto("http://127.0.0.1:"+server.address().port+"/#design-lab/plan",{waitUntil:"domcontentloaded"});
 await page.locator("#lp-view").waitFor({state:"visible"});
 assert.equal(await page.locator("#lp-type option").count(),12);
@@ -77,6 +77,37 @@ await page.locator("#lp-rw").fill("6500");await page.locator("#lp-room-apply").c
 const saved=await page.evaluate(()=>LerikaRoomProject.snapshot());
 await page.reload();await page.locator("#lp-view").waitFor({state:"visible"});
 assert.deepEqual(await page.evaluate(()=>LerikaRoomProject.snapshot()),saved,"immediate reload preserves plan");
+// V5.23.1: select directly by touch or list, rotate both directions and delete without closing zoom.
+await page.locator("#lp-demo").click();await page.locator("#lp-3d").click();await page.locator("#lz-open-lp-view").click();
+hit=await sourceHit(3);box=await page.locator("#lz-stage").boundingBox();k=Math.min(box.width/hit.w,box.height/hit.h);
+const targetX=box.x+(box.width-hit.w*k)/2+hit.x*k,targetY=box.y+(box.height-hit.h*k)/2+hit.y*k;
+await cdp.send("Input.dispatchTouchEvent",{type:"touchStart",touchPoints:[{x:targetX,y:targetY,id:1}]});
+await cdp.send("Input.dispatchTouchEvent",{type:"touchEnd",touchPoints:[]});
+assert.equal(await page.locator("#lz-item-pick").inputValue(),"3");
+const beforeDelete=await page.evaluate(()=>LerikaRoomProject.snapshot());
+rejectDelete=true;await page.locator("#lz-remove-item").tap();rejectDelete=false;
+assert.deepEqual(await page.evaluate(()=>LerikaRoomProject.snapshot()),beforeDelete);
+await page.locator("#lz-remove-item").tap();
+assert.equal(await page.locator("#lz-dialog").isVisible(),true);
+assert.deepEqual((await page.evaluate(()=>LerikaRoomProject.snapshot())).items,beforeDelete.items.filter(a=>a.id!==3));
+assert.notEqual(await page.locator("#lz-item-pick").inputValue(),"3");
+await page.locator("#lz-item-pick").selectOption("1");assert.match(await page.locator("#lz-selected").innerText(),/№1/);
+await page.locator("#lz-close").tap();await page.locator("#lp-clear").click();await page.locator("#lp-type").selectOption("wardrobe");await page.locator("#lp-add").click();
+await page.locator("#lp-x").fill("1000");await page.locator("#lp-z").fill("1000");await page.locator("#lp-item-apply").click();
+assert.ok(await page.locator("#lp-csv").isEnabled());
+await page.locator("#lp-2d").click();await page.locator("#lz-open-lp-view").click();
+const initialTurn=await page.evaluate(()=>LerikaRoomProject.snapshot());
+await page.locator("#lz-turn-right").tap();
+assert.equal((await page.evaluate(()=>LerikaRoomProject.snapshot())).items[0].rot,(initialTurn.items[0].rot+1)%4);
+await page.locator("#lz-turn-left").tap();
+assert.deepEqual(await page.evaluate(()=>LerikaRoomProject.snapshot()),initialTurn);
+await page.locator("#lz-remove-item").tap();assert.equal(await page.locator("#lz-dialog").isVisible(),true);
+assert.equal((await page.evaluate(()=>LerikaRoomProject.snapshot())).items.length,0);
+for(const id of ["lz-item-pick","lz-turn-left","lz-turn-right","lz-remove-item"])assert.equal(await page.locator("#"+id).isDisabled(),true);
+await page.locator("#lz-close").tap();assert.equal(await page.locator("#lp-remove-view").isDisabled(),true);
+await page.reload();await page.locator("#lp-view").waitFor({state:"visible"});assert.equal((await page.evaluate(()=>LerikaRoomProject.snapshot())).items.length,0);
+await page.locator("#lp-demo").click();await page.locator("#lp-remove-view").click();assert.equal((await page.evaluate(()=>LerikaRoomProject.snapshot())).items.length,2);
+console.log("PASS V5.23.1 touch selection, list selection, cancel/confirm deletion, rotate both ways in 2D, empty state, autosave and inline delete");
 assert.deepEqual(errors,[]);
 console.log("PASS BUG-006/021: immediate reload, preserved layout, boundary movement rejected");
 console.log("Mobile browser, model validation, collision/export gate, save/load, CSV download, studio handoff and existing routes PASS");
