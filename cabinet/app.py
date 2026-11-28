@@ -119,6 +119,7 @@ if not SETUP_REQUIRED:
     CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY CHECK(id=1), count INTEGER NOT NULL, since INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS design_requests(id TEXT PRIMARY KEY, created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS telegram_test_drafts(chat_key TEXT PRIMARY KEY, code TEXT NOT NULL, brief TEXT NOT NULL, expires INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS telegram_test_files(chat_key TEXT NOT NULL REFERENCES telegram_test_drafts(chat_key) ON DELETE CASCADE, code TEXT NOT NULL, checksum TEXT NOT NULL, name TEXT NOT NULL, data BLOB NOT NULL, PRIMARY KEY(chat_key,code,checksum));
     CREATE TABLE IF NOT EXISTS request_numbers(number INTEGER PRIMARY KEY, request_id TEXT NOT NULL UNIQUE REFERENCES design_requests(id));
     CREATE TABLE IF NOT EXISTS request_sequence(id INTEGER PRIMARY KEY CHECK(id=1), last_number INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS design_briefs(project TEXT PRIMARY KEY REFERENCES projects(id), brief TEXT NOT NULL);
@@ -352,8 +353,11 @@ def telegram_webhook():
     pilot=None
     if is_admin:
         from telegram_intake import handle_test_order
+        from telegram_files import receive_attachment
         try:
-            pilot=handle_test_order(text,digest,KEY,db,lock,allocate_number,existing_number,reserve_limits,notify_telegram_order)
+            pilot=receive_attachment(message,digest,os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip(),db,lock)
+            if pilot is None:
+                pilot=handle_test_order(text,digest,KEY,db,lock,allocate_number,existing_number,reserve_limits,notify_telegram_order)
         except TooManyRequests:
             pilot="Достигнут лимит тестовых заявок. Попробуйте позже."
         except Exception:
