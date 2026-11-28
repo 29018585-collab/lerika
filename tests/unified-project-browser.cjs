@@ -1,7 +1,7 @@
 "use strict";
 const {chromium}=require("playwright"),assert=require("node:assert/strict"),fs=require("node:fs"),http=require("node:http");
 const html=fs.readFileSync("index.html");let priceMode="full",submitted=null;
-const server=http.createServer((req,res)=>{if(req.url==="/"){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(html)}else if(req.url==="/api/order-requests"&&req.method==="POST"){const chunks=[];req.on("data",c=>chunks.push(c));req.on("end",()=>{submitted={method:req.method,headers:req.headers,payload:Buffer.concat(chunks)};res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify({id:"test-apartment",number:"QA-APT"}))})}else if(req.url==="/public/prices"){if(priceMode==="error"){res.writeHead(503);res.end();return}res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify({updated:1760000000,entries:priceMode==="empty"?[]:[{group:"корпус",material:"ЛДСП",price:1000},{group:"фасады",material:"ЛДСП",price:2000},{group:"фасады",material:"МДФ эмаль",price:3500}]}))}else{res.writeHead(404);res.end()}});
+const server=http.createServer((req,res)=>{if(req.url==="/"||req.url==="/?qa-apartment"){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(req.url==="/"?html:html.toString("utf8").replace(/(<meta name="lerika-app-origin" content=")[^"]+(")/,(_,a,b)=>a+"http://127.0.0.1:"+server.address().port+b))}else if(req.url==="/api/order-requests"&&req.method==="POST"){const chunks=[];req.on("data",c=>chunks.push(c));req.on("end",()=>{submitted={method:req.method,headers:req.headers,payload:Buffer.concat(chunks)};res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify({id:"test-apartment",number:"QA-APT"}))})}else if(req.url==="/public/prices"){if(priceMode==="error"){res.writeHead(503);res.end();return}res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify({updated:1760000000,entries:priceMode==="empty"?[]:[{group:"корпус",material:"ЛДСП",price:1000},{group:"фасады",material:"ЛДСП",price:2000},{group:"фасады",material:"МДФ эмаль",price:3500}]}))}else{res.writeHead(404);res.end()}});
 (async()=>{await new Promise(r=>server.listen(0,"127.0.0.1",r));const b=await chromium.launch({headless:true});try{
 const p=await b.newPage({viewport:{width:390,height:844},hasTouch:true,acceptDownloads:true});const errors=[];p.on("pageerror",e=>errors.push(e.message));p.on("dialog",d=>d.accept());
 const root="http://127.0.0.1:"+server.address().port+"/";
@@ -74,7 +74,7 @@ console.log("PASS V5.23 BUG-017/018/029 guide, studio label and estimate source 
  // V5.58: isolate apartment estimate and order payload from earlier room draft.
  const apt=await b.newPage({viewport:{width:390,height:844},hasTouch:true,acceptDownloads:true});
  const aptErrors=[];apt.on("pageerror",e=>aptErrors.push(e.message));apt.on("dialog",d=>d.accept());
- await apt.goto(root+"#design-lab/plan");await apt.locator("#lp-view").waitFor({state:"visible"});
+ await apt.goto(root+"?qa-apartment#design-lab/plan");await apt.locator("#lp-view").waitFor({state:"visible"});
  const fixture=await apt.evaluate(()=>{
    const e=document.getElementById("lp-view").liveEdit.editor;
    const err=e.applyApartmentDraft({height:2700,partition:160,corridorDepth:1500,corridorLength:0,doorWidth:900,rooms:[{name:"Кухня",w:4000,d:3500,side:"top"},{name:"Спальня",w:4000,d:3500,side:"bottom"}]});
@@ -106,7 +106,7 @@ console.log("PASS V5.23 BUG-017/018/029 guide, studio label and estimate source 
  assert.match(await apt.locator("#lo-files-status").textContent(),/4 \/ 10 файлов/);
  for(const n of ["LERIKA-Project.txt","LERIKA-Estimate.csv","LERIKA-Apartment-Plan.png","LERIKA-Apartment-3D.png"])assert.ok((await apt.locator("#lo-list").textContent()).includes(n),n);
  assert.equal(await apt.locator("#lo-source").inputValue(),"plan");assert.equal(submitted,null,"no automatic send");
- await apt.locator("#lo-contact").fill("qa@example.test");await apt.locator("#lo-consent").check();await apt.locator("#lo-send").click();
+ assert.equal(await apt.locator("#lo-send").isEnabled(),true,"configured local origin permits test submission");await apt.locator("#lo-contact").fill("qa@example.test");await apt.locator("#lo-consent").check();await apt.locator("#lo-send").click();
  await apt.waitForFunction(()=>document.body.textContent.includes("QA-APT"));
  assert.equal(submitted.method,"POST");
  const form=await new Response(submitted.payload,{headers:{"Content-Type":submitted.headers["content-type"]}}).formData();
