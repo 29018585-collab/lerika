@@ -77,7 +77,7 @@ def handle_test_order(text, digest, key, db, lock, allocate_number, existing_num
     if command == "/confirm" and not re.fullmatch(r"[a-f0-9]{12}", value):
         return "Для подтверждения отправьте команду /confirm с кодом из предварительного просмотра."
     if command in ("/order_test", "/begin_test"):
-        reserve_limits([("lerika-tg-test-order-day", 5, 86400)])
+        reserve_limits([("lerika-tg-test-order-day", 30, 86400),("lerika-tg-test-order-owner-"+digest, 5, 86400)])
     fresh = False
     number = None
     attachment_count = 0
@@ -122,7 +122,7 @@ def handle_test_order(text, digest, key, db, lock, allocate_number, existing_num
             if used+sum(len(f["data"]) for f in attachments)>STORAGE_CAP:
                 return "Хранилище заполнено. Черновик сохранён, заявка не отправлена."
             attachment_count = len(attachments)
-            brief = "Источник заявки: Telegram\nРежим: ТЕСТ — не производственный заказ\nКонтакт: администратор (тест)\n\n" + row["brief"]
+            brief = "Источник заявки: Telegram\nРежим: ТЕСТ — не производственный заказ\nКонтакт: владелец Telegram-заявки (тест)\n\n" + row["brief"]
             c.execute("INSERT INTO projects(category,title,description,stage,status,published,updated,id) VALUES(?,?,?,?,?,?,?,?)", (8, "ТЕСТ · Telegram", "Тестовая заявка ЛериКа из Telegram", 1, "work", 0, now, rid))
             c.execute("INSERT INTO design_briefs VALUES(?,?)", (rid, brief))
             for f in attachments:
@@ -142,7 +142,7 @@ def handle_test_order(text, digest, key, db, lock, allocate_number, existing_num
     return "Тестовая заявка " + number + " сохранена в закрытом кабинете. Это не производственный заказ." + (" Вложений: "+str(attachment_count)+"." if fresh else "")
 
 
-def pilot_keyboard(digest,db,lock,now=None):
+def pilot_keyboard(digest,db,lock,now=None,client=False):
     now=int(time.time()) if now is None else now
     with db() as c:
         lock(c,82003)
@@ -158,4 +158,6 @@ def pilot_keyboard(digest,db,lock,now=None):
         keyboard=[[{"text":"➕ Новая тестовая заявка"}]]
     keyboard.append([{"text":"📦 Мои заявки"},{"text":"🌐 Инструменты сайта"}])
     keyboard.append([{"text":"🔕 Выключить уведомления" if subscribed else "🔔 Включить уведомления"}])
+    if client:
+        keyboard.append([{"text":"🚪 Выйти из теста"}])
     return {"keyboard":keyboard,"resize_keyboard":True,"is_persistent":True}
