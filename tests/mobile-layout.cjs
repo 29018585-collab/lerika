@@ -12,6 +12,11 @@ assert.match(await p.locator("#light-welcome").textContent(),/Добро пож�
 assert.ok(await p.locator("#light-welcome").evaluate(el=>el.getBoundingClientRect().top>=document.querySelector("#kitchen").getBoundingClientRect().bottom-1&&el.getBoundingClientRect().bottom<=document.querySelector(".slogan-zone h1").getBoundingClientRect().top+1&&el.scrollWidth<=el.clientWidth+1));
 assert.equal(await p.locator("#kitchen .switch").count(),0);assert.equal(await p.locator("#kitchen").evaluate(e=>e.classList.contains("on")),false);await p.clock.fastForward(2300);assert.equal(await p.locator("#kitchen").evaluate(e=>e.classList.contains("on")),true);assert.equal(await p.locator("body").evaluate(e=>e.classList.contains("lights-on")),true);
 console.log("PASS automatic light at "+width+"px");
+assert.equal(await p.locator("#home-intro").isVisible(),true);assert.equal(await p.locator("#catalog-list").isVisible(),false);assert.equal(await p.locator(".categories .project:visible").count(),0);
+await p.getByRole("link",{name:"Смотреть проекты",exact:true}).click();
+await p.locator("#catalog-list").waitFor({state:"visible"});assert.equal(await p.locator("#home-intro").isVisible(),false);assert.equal(await p.locator("#kitchen").isVisible(),false);assert.equal(await p.locator(".categories .project:visible").count(),8);
+await p.locator("#project-1 .portfolio-open").click();await p.locator("#portfolio-1").waitFor({state:"visible"});await p.locator(".portfolio-back").click();await p.locator("#catalog-list").waitFor({state:"visible"});await p.evaluate(()=>location.hash="#home");await p.locator("#home-intro").waitFor({state:"visible"});assert.equal(await p.locator("#catalog-list").isVisible(),false);assert.equal(await p.locator("#kitchen").isVisible(),true);
+console.log("PASS V5.63 home/catalog separation and portfolio navigation at "+width+"px");
 const header=await p.evaluate(()=>{const box=s=>document.querySelector(s).getBoundingClientRect();const logo=box("header .header-mirror"),actions=box(".lerika-header-actions"),share=box("#lerika-share"),menu=box(".menu-button");return {logo:logo.width,ratio:logo.width/logo.height,clear:logo.right<=actions.left+1&&share.right<=menu.left+1&&menu.right<=innerWidth+1&&logo.left>=0}});
 assert.equal(header.logo,width<=360?96:width<=650?105:120);
 assert.ok(Math.abs(header.ratio-1.55)<.03,"logo ratio "+width);
