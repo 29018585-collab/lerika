@@ -130,6 +130,9 @@ if not SETUP_REQUIRED:
     CREATE TABLE IF NOT EXISTS design_briefs(project TEXT PRIMARY KEY REFERENCES projects(id), brief TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS clients(id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, password_hash TEXT NOT NULL, created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS client_requests(project TEXT PRIMARY KEY REFERENCES projects(id), client TEXT NOT NULL REFERENCES clients(id));
+    CREATE TABLE IF NOT EXISTS client_order_messages(id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, client TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE, author TEXT NOT NULL CHECK(author IN ('client','designer')), body TEXT NOT NULL, created INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS client_order_messages_thread ON client_order_messages(project,client,created,id);
+    CREATE TABLE IF NOT EXISTS client_file_shares(file TEXT PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE, client TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE);
     CREATE TABLE IF NOT EXISTS telegram_web_links(client TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE, chat_key TEXT UNIQUE NOT NULL, created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS telegram_web_pending(client TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE, token_hash TEXT UNIQUE NOT NULL, expires INTEGER NOT NULL, chat_key TEXT, proof_hash TEXT);
     CREATE TABLE IF NOT EXISTS client_limits(action TEXT PRIMARY KEY, count INTEGER NOT NULL, since INTEGER NOT NULL);
@@ -761,6 +764,45 @@ def client_telegram_link():
             return jsonify(ok=False,message="Код недействителен или привязка недоступна.")
         return jsonify(ok=True)
 
+def document_recipient(c,project):
+    direct=c.execute("SELECT cr.client FROM client_requests cr JOIN clients cl ON cl.id=cr.client WHERE cr.project=?",(project,)).fetchone()
+    if direct: return direct["client"]
+    from telegram_web_link import active_digests
+    allowed=active_digests(KEY,os.environ.get("LERIKA_TG_CLIENT_PILOT",""),os.environ.get("LERIKA_TG_PILOT_CHAT_IDS",""))
+    if not allowed: return None
+    row=c.execute("SELECT l.client,l.chat_key FROM telegram_test_owners o JOIN telegram_web_links l ON l.chat_key=o.chat_key JOIN telegram_pilot_clients t ON t.chat_key=l.chat_key JOIN clients cl ON cl.id=l.client JOIN projects p ON p.id=o.request_id WHERE o.request_id=? AND p.published=0",(project,)).fetchone()
+    return row["client"] if row and row["chat_key"] in allowed else None
+
+def order_thread(project,designer=False):
+    cid=None if designer else client_id()
+    if not designer and not cid: abort(401)
+    if request.method=="POST":
+        if not designer: client_origin()
+        d=request.get_json(silent=True)
+        if not isinstance(d,dict) or not isinstance(d.get("text"),str): abort(400)
+        body=d["text"].strip()
+        if not 1<=len(body)<=2000 or "\x00" in body: abort(400)
+        reserve_limits([(limit_key("order-message",cid or "designer"),60,3600)])
+    with db() as c:
+        if request.method=="POST": lock(c,82003)
+        owner=document_recipient(c,project)
+        if not owner or (not designer and owner!=cid): abort(404)
+        if request.method=="POST":
+            count=c.execute("SELECT COUNT(*) AS n FROM client_order_messages WHERE project=? AND client=?",(project,owner)).fetchone()["n"]
+            if count>=200: abort(413)
+            c.execute("INSERT INTO client_order_messages VALUES(?,?,?,?,?,?)",(secrets.token_hex(16),project,owner,"designer" if designer else "client",body,int(time.time())))
+        rows=[dict(x) for x in c.execute("SELECT id,author,body,created FROM client_order_messages WHERE project=? AND client=? ORDER BY created,id",(project,owner))]
+    return jsonify(messages=rows),201 if request.method=="POST" else 200
+
+@app.route("/api/client/orders/<project>/messages",methods=["GET","POST"])
+def client_order_messages(project):
+    return order_thread(project)
+
+@app.route("/api/projects/<project>/messages",methods=["GET","POST"])
+@admin
+def designer_order_messages(project):
+    return order_thread(project,designer=True)
+
 @app.get("/api/client/session")
 def client_session():
     cid=client_id()
@@ -778,9 +820,22 @@ def client_session():
             known={x["id"] for x in orders}
             orders.extend(x for x in extra if x["id"] not in known)
             orders.sort(key=lambda x:x["created"],reverse=True)
+        for order in orders:
+            order["files"]=[dict(f) for f in c.execute("SELECT f.id,f.name,f.stage FROM files f JOIN client_file_shares s ON s.file=f.id WHERE f.project=? AND s.client=? ORDER BY f.stage,f.id",(order["id"],cid))] if document_recipient(c,order["id"])==cid else []
     for order in orders:
         order["number"]=request_number(order["number"]) if order["number"] is not None else order["id"][:12]
     return jsonify(name=row["name"],email=row["email"],orders=orders,telegram_link_available=bool(allowed),telegram_linked=linked,telegram_link_exists=bool(link))
+
+@app.get("/api/client/files/<fid>")
+def client_file(fid):
+    cid=client_id()
+    if not cid: abort(401)
+    with db() as c:
+        f=c.execute("SELECT f.* FROM files f JOIN client_file_shares s ON s.file=f.id JOIN clients cl ON cl.id=s.client WHERE f.id=? AND s.client=?",(fid,cid)).fetchone()
+        if not f or document_recipient(c,f["project"])!=cid: abort(404)
+    response=send_file(io.BytesIO(f["data"]),mimetype="application/octet-stream",as_attachment=True,download_name=f["name"],max_age=0)
+    response.headers["Cache-Control"]="private, no-store"
+    return response
 
 @app.get("/api/clients")
 @admin
@@ -1018,7 +1073,9 @@ def projects():
                 p["request_source"]=matched
                 p["request_created"]=intake["created"]
                 p["request_number"]=existing_number(c,p["id"]) or p["id"][:12]
-            p["files"]=[dict(f) for f in c.execute("SELECT id,stage,name,mime,image,public FROM files WHERE project=? ORDER BY stage,id",(p["id"],))]
+            recipient=document_recipient(c,p["id"])
+            p["client_share_available"]=bool(recipient)
+            p["files"]=[dict(f) for f in c.execute("SELECT f.id,f.stage,f.name,f.mime,f.image,f.public,CASE WHEN s.client=? THEN 1 ELSE 0 END AS client_shared FROM files f LEFT JOIN client_file_shares s ON s.file=f.id WHERE f.project=? ORDER BY f.stage,f.id",(recipient,p["id"]))]
         covers=[dict(x) for x in c.execute("SELECT * FROM covers")]
     return jsonify(projects=rows,covers=covers,categories=CATEGORIES,stages=STAGES)
 
@@ -1110,6 +1167,23 @@ def set_cover(cat):
         f=c.execute("SELECT f.id FROM files f JOIN projects p ON p.id=f.project WHERE f.id=? AND f.image=1 AND f.public=1 AND p.published=1 AND NOT EXISTS (SELECT 1 FROM design_requests dr WHERE dr.id=p.id) AND p.category=?",(data["file"],cat)).fetchone()
         if not f: abort(400)
         c.execute("INSERT INTO covers VALUES(?,?) ON CONFLICT(category) DO UPDATE SET file=excluded.file",(cat,f["id"]))
+    return jsonify(ok=True)
+
+@app.put("/api/files/<fid>/client-share")
+@admin
+def share_client_file(fid):
+    d=request.get_json(silent=True)
+    if not isinstance(d,dict) or type(d.get("shared")) is not bool: abort(400)
+    with db() as c:
+        lock(c,82003)
+        f=c.execute("SELECT project FROM files WHERE id=?",(fid,)).fetchone()
+        if not f: abort(404)
+        if d["shared"]:
+            recipient=document_recipient(c,f["project"])
+            if not recipient: abort(409)
+            c.execute("INSERT INTO client_file_shares(file,client) VALUES(?,?) ON CONFLICT(file) DO UPDATE SET client=excluded.client",(fid,recipient))
+        else:
+            c.execute("DELETE FROM client_file_shares WHERE file=?",(fid,))
     return jsonify(ok=True)
 
 @app.get("/api/files/<fid>")

@@ -137,6 +137,75 @@ class StudioTests(unittest.TestCase):
             self.assertEqual(downloaded.data,originals[f["name"]])
             self.assertIn("attachment",downloaded.headers["Content-Disposition"])
 
+    def test_v566_private_order_conversation(self):
+        headers={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        owner={"name":"Message QA","email":"thread@example.invalid","password":"long-test-password-123","consent":True}
+        self.assertEqual(self.client.post("/api/client/register",json=owner,headers=headers,base_url=ORIGIN).status_code,201)
+        rid=self.submit(self.data()).json["id"]
+        url="/api/client/orders/"+rid+"/messages"
+        admin_url="/api/projects/"+rid+"/messages"
+        other=app.test_client()
+        self.assertEqual(other.get(url,base_url=ORIGIN).status_code,401)
+        self.assertEqual(other.post("/api/client/register",json={**owner,"email":"other-thread@example.invalid"},headers=headers,base_url=ORIGIN).status_code,201)
+        self.assertEqual(other.get(url,base_url=ORIGIN).status_code,404)
+        self.assertEqual(other.post(url,json={"text":"forbidden"},headers=headers,base_url=ORIGIN).status_code,404)
+        self.assertEqual(self.client.get(admin_url,base_url=ORIGIN).status_code,401)
+        self.assertEqual(self.client.post(url,json={"text":"test"},base_url=ORIGIN).status_code,403)
+        self.assertEqual(self.client.post(url,json={"text":" "},headers=headers,base_url=ORIGIN).status_code,400)
+        self.assertEqual(self.client.post(url,json={"text":"x"*2001},headers=headers,base_url=ORIGIN).status_code,400)
+        text="<script>QA</script> Уточните фасады."
+        r=self.client.post(url,json={"text":text,"author":"designer"},headers=headers,base_url=ORIGIN)
+        self.assertEqual(r.status_code,201)
+        self.assertEqual(r.json["messages"][0]["author"],"client")
+        admin=app.test_client()
+        h={"X-CSRF":admin.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN).json["csrf"]}
+        self.assertEqual(admin.get(admin_url,base_url=ORIGIN).json["messages"][0]["body"],text)
+        self.assertEqual(admin.post(admin_url,json={"text":"Ответ"},base_url=ORIGIN).status_code,403)
+        self.assertEqual(admin.post(admin_url,json={"text":"Ответ"},headers=h,base_url=ORIGIN).status_code,201)
+        messages=self.client.get(url,base_url=ORIGIN).json["messages"]
+        self.assertEqual({m["author"]:m["body"] for m in messages},{"client":text,"designer":"Ответ"})
+        self.assertNotIn(text,self.client.get("/public/portfolio").get_data(as_text=True))
+        self.assertEqual(admin.delete("/api/projects/"+rid,json={"confirm":True},headers=h,base_url=ORIGIN).status_code,200)
+        with db() as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) AS n FROM client_order_messages").fetchone()["n"],0)
+        self.assertEqual(self.client.get(url,base_url=ORIGIN).status_code,404)
+
+    def test_v564_client_document_explicit_share_and_revoke(self):
+        headers={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        owner={"name":"Client QA","email":"share@example.invalid","password":"long-test-password-123","consent":True}
+        self.assertEqual(self.client.post("/api/client/register",json=owner,headers=headers,base_url=ORIGIN).status_code,201)
+        original=b"%PDF-1.4\nQA shared document\n%%EOF"
+        d=self.data();d["files"]=[(io.BytesIO(original),"plan.pdf")]
+        r=self.client.post("/api/order-requests",data=d,headers={"Origin":ORIGIN,"X-Lerika-Studio":"5.8"},base_url=ORIGIN,content_type="multipart/form-data")
+        self.assertEqual(r.status_code,201)
+        rid=r.json["id"]
+        admin=app.test_client()
+        h={"X-CSRF":admin.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN).json["csrf"]}
+        project=next(p for p in admin.get("/api/projects",base_url=ORIGIN).json["projects"] if p["id"]==rid)
+        self.assertTrue(project["client_share_available"])
+        fid=project["files"][0]["id"]
+        url="/api/client/files/"+fid
+        def orders():
+            return self.client.get("/api/client/session",base_url=ORIGIN).json["orders"]
+        self.assertEqual(orders()[0]["files"],[])
+        self.assertEqual(self.client.get(url,base_url=ORIGIN).status_code,404)
+        self.assertEqual(admin.put("/api/files/"+fid+"/client-share",json={"shared":True},base_url=ORIGIN).status_code,403)
+        self.assertEqual(admin.put("/api/files/"+fid+"/client-share",json={"shared":True},headers=h,base_url=ORIGIN).status_code,200)
+        self.assertEqual(orders()[0]["files"][0]["id"],fid)
+        download=self.client.get(url,base_url=ORIGIN)
+        self.assertEqual(download.status_code,200)
+        self.assertEqual(download.data,original)
+        self.assertIn("no-store",download.headers["Cache-Control"])
+        other=app.test_client()
+        self.assertEqual(other.get(url,base_url=ORIGIN).status_code,401)
+        self.assertEqual(other.post("/api/client/register",json={**owner,"email":"other-share@example.invalid"},headers=headers,base_url=ORIGIN).status_code,201)
+        self.assertEqual(other.get(url,base_url=ORIGIN).status_code,404)
+        self.assertEqual(other.get("/api/client/session",base_url=ORIGIN).json["orders"],[])
+        self.assertEqual(other.get("/public/photos/"+fid).status_code,404)
+        self.assertEqual(admin.put("/api/files/"+fid+"/client-share",json={"shared":False},headers=h,base_url=ORIGIN).status_code,200)
+        self.assertEqual(orders()[0]["files"],[])
+        self.assertEqual(self.client.get(url,base_url=ORIGIN).status_code,404)
+
     def test_universal_order_rejects_bad_archive_and_executable(self):
         for name in ("bad.zip","program.exe"):
             d=self.data();d["files"]=(io.BytesIO(b"not an archive"),name)
@@ -239,6 +308,21 @@ class StudioTests(unittest.TestCase):
             login=admin.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
             csrf=login.json["csrf"]
             project=next(p for p in admin.get("/api/projects",base_url=ORIGIN).json["projects"] if p["id"]==website_result["id"])
+            tg_project=next(p for p in admin.get("/api/projects",base_url=ORIGIN).json["projects"] if p["request_number"]==telegram_number)
+            self.assertTrue(tg_project["client_share_available"])
+            document=b"%PDF-1.4\nTelegram QA\n%%EOF"
+            up=admin.post("/api/projects/"+tg_project["id"]+"/files",base_url=ORIGIN,headers={"X-CSRF":csrf},data={"stage":"3","file":(io.BytesIO(document),"telegram-plan.pdf")},content_type="multipart/form-data")
+            self.assertEqual(up.status_code,201)
+            fid=up.json["id"]
+            download_url="/api/client/files/"+fid
+            share_url="/api/files/"+fid+"/client-share"
+            self.assertEqual(self.client.get(download_url,base_url=ORIGIN).status_code,404)
+            self.assertEqual(admin.put(share_url,json={"shared":True},headers={"X-CSRF":csrf},base_url=ORIGIN).status_code,200)
+            self.assertEqual(self.client.get(download_url,base_url=ORIGIN).data,document)
+            self.assertEqual(other.get(download_url,base_url=ORIGIN).status_code,404)
+            self.assertEqual(next(o for o in session()["orders"] if o["number"]==telegram_number)["files"][0]["id"],fid)
+            with patch.dict(os.environ,{"LERIKA_TG_CLIENT_PILOT":"0"}):
+                self.assertEqual(self.client.get(download_url,base_url=ORIGIN).status_code,404)
             def stage(value):
                 return admin.put("/api/projects/"+project["id"],base_url=ORIGIN,headers={"X-CSRF":csrf},json={**project,"stage":value,"published":bool(project["published"])})
             with patch("telegram_core.bot_call",return_value={"message_id":1}) as sender:
@@ -255,6 +339,10 @@ class StudioTests(unittest.TestCase):
                 self.assertEqual(stage(3).status_code,200)
                 self.assertEqual(sender.call_count,1)
                 self.assertTrue(web("unlink").json["ok"])
+                self.assertEqual(self.client.get(download_url,base_url=ORIGIN).status_code,404)
+                self.assertEqual(admin.put(share_url,json={"shared":True},headers={"X-CSRF":csrf},base_url=ORIGIN).status_code,409)
+                with db() as c:
+                    self.assertIsNone(c.execute("SELECT file FROM client_file_shares WHERE file=?",(fid,)).fetchone())
                 self.assertEqual(stage(4).status_code,200)
                 self.assertEqual(sender.call_count,1)
             self.assertFalse(session()["telegram_linked"])
