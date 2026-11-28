@@ -9,6 +9,7 @@ from telegram_files import attachment_from_message, validate_bytes, receive_atta
 from telegram_intake import handle_test_order, pilot_keyboard
 from telegram_stage_notifications import preference,event_for_edit,deliver_event
 from telegram_client_pilot import allowed,enrolled,registration,registration_keyboard,notification_chat,digest_for,JOIN,CONSENT,LEAVE
+from telegram_web_link import issue,claim,confirm,unlink,active_digests
 
 class TelegramFileQA(unittest.TestCase):
     def setUp(self):
@@ -27,6 +28,10 @@ class TelegramFileQA(unittest.TestCase):
         CREATE TABLE telegram_test_subscriptions(chat_key TEXT PRIMARY KEY);
         CREATE TABLE telegram_pilot_clients(chat_key TEXT PRIMARY KEY, created INTEGER NOT NULL);
         CREATE TABLE telegram_pilot_pending(chat_key TEXT PRIMARY KEY, expires INTEGER NOT NULL);
+        CREATE TABLE clients(id TEXT PRIMARY KEY);
+        CREATE TABLE client_requests(project TEXT PRIMARY KEY,client TEXT NOT NULL REFERENCES clients(id));
+        CREATE TABLE telegram_web_links(client TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE,chat_key TEXT UNIQUE NOT NULL,created INTEGER NOT NULL);
+        CREATE TABLE telegram_web_pending(client TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE,token_hash TEXT UNIQUE NOT NULL,expires INTEGER NOT NULL,chat_key TEXT,proof_hash TEXT);
         """)
         self.notices=[]
         self.key="k"*32
@@ -240,6 +245,52 @@ class TelegramFileQA(unittest.TestCase):
         self.assertEqual(self.count("design_requests"),2)
         self.assertIsNone(event_for_edit(self.conn,rid,{"stage":1,"status":"work"},3,"work"))
         self.assertEqual(notification_chat(self.conn,event,self.key,"999999","1","123456,123457"),"")
+    def test_web_link_two_channels_and_expiry(self):
+        first,second=[digest_for(self.key,i) for i in (123456,123457)]
+        for digest in (first,second):
+            registration(JOIN,digest,self.db,self.lock)
+            registration(CONSENT,digest,self.db,self.lock)
+        permitted=active_digests(self.key,"1","123456,123457")
+        with self.conn:
+            self.conn.execute("INSERT INTO clients VALUES('a'),('b')")
+            token=issue(self.conn,"a",self.key,100)
+            self.assertNotEqual(token,self.conn.execute("SELECT token_hash FROM telegram_web_pending").fetchone()["token_hash"])
+            self.assertIsNone(claim(self.conn,first,self.key,token,701))
+            token=issue(self.conn,"a",self.key,800)
+            proof=claim(self.conn,first,self.key,token,801)
+            self.assertIsNotNone(proof)
+            self.assertIsNone(claim(self.conn,second,self.key,token,802))
+            self.assertFalse(confirm(self.conn,"b",self.key,proof,803,permitted))
+            self.assertFalse(confirm(self.conn,"a",self.key,proof,803,{second}))
+            self.assertFalse(confirm(self.conn,"a",self.key,"0"*16,803,permitted))
+            self.assertTrue(confirm(self.conn,"a",self.key,proof,804,permitted))
+            self.assertFalse(confirm(self.conn,"a",self.key,proof,805,permitted))
+            self.assertIsNone(issue(self.conn,"a",self.key,806))
+            other=issue(self.conn,"b",self.key,807)
+            self.assertIsNone(claim(self.conn,first,self.key,other,808))
+            unlink(self.conn,"a")
+            self.assertEqual(self.count("telegram_web_links"),0)
+    def test_linked_history_without_transfer_and_revocation(self):
+        first,second=[digest_for(self.key,i) for i in (123456,123457)]
+        for digest in (first,second):
+            registration(JOIN,digest,self.db,self.lock)
+            registration(CONSENT,digest,self.db,self.lock)
+        self.order("/order_test synthetic cabinet",digest=first)
+        self.order("/confirm "+self.code(),digest=first)
+        rid=self.conn.execute("SELECT id FROM design_requests").fetchone()["id"]
+        with self.conn:
+            self.conn.execute("INSERT INTO clients VALUES('web')")
+            self.conn.execute("INSERT INTO client_requests VALUES(?,?)",(rid,"web"))
+            token=issue(self.conn,"web",self.key,100)
+            proof=claim(self.conn,second,self.key,token,101)
+            self.assertTrue(confirm(self.conn,"web",self.key,proof,102,{first,second}))
+        self.assertIn("L-000001",self.order("/orders",digest=second))
+        registration(LEAVE,second,self.db,self.lock)
+        self.assertNotIn("L-000001",self.order("/orders",digest=second))
+        self.assertIn("L-000001",self.order("/orders",digest=first))
+        self.assertEqual(self.count("client_requests"),1)
+        self.assertEqual(self.count("design_requests"),1)
+        self.assertEqual(self.count("telegram_web_links"),0)
     def test_photo_and_path(self):
         spec=attachment_from_message({"photo":[{"file_size":3,"file_id":"small"},{"file_size":5,"file_id":"big","file_unique_id":"x"}]})
         self.assertEqual(spec[1:],("big",5))
