@@ -1,8 +1,9 @@
 "use strict";
 const {chromium}=require("playwright"),assert=require("node:assert/strict"),fs=require("node:fs"),http=require("node:http");
 const html=fs.readFileSync("index.html"),admin=fs.readFileSync("cabinet/templates/admin.html");
+const pdf=Buffer.from("%PDF-1.4\nQA document\n%%EOF"),filename="Кухня-QA.pdf";let deny=false,downloads=0;
 const rows=[
- {id:"abcdef1234567890abcdef1234567890",request_number:"L-000123",request_source:"project",request_created:100,category:1,title:"Синтетическая заявка 123",description:"Тест",stage:1,status:"work",published:0,files:[]},
+ {id:"abcdef1234567890abcdef1234567890",request_number:"L-000123",request_source:"project",request_created:100,category:1,title:"Синтетическая заявка 123",description:"Тест",stage:1,status:"work",published:0,files:[{id:"qa-pdf",name:filename,stage:1,public:0,image:0}]},
  {id:"bcdefa1234567890bcdefa1234567890",request_number:"L-000124",request_source:"config",request_created:200,category:1,title:"Синтетическая заявка 124",description:"Тест",stage:1,status:"work",published:0,files:[]}
 ];
 const json=(res,data)=>{res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify(data))};
@@ -11,7 +12,8 @@ const server=http.createServer((req,res)=>{
  const p=new URL(req.url,"http://127.0.0.1").pathname;
  if(p==="/showroom/"){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(html);return}
  if(p==="/cabinet/"){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(admin);return}
- if(p==="/session"){json(res,{csrf:"synthetic"});return}
+ if(p==="/session"){res.setHeader("Set-Cookie","qa_session=1; Path=/; HttpOnly; SameSite=Strict");json(res,{csrf:"synthetic"});return}
+ if(p==="/api/files/qa-pdf"){if(deny||!req.headers.cookie?.includes("qa_session=1")){res.writeHead(401);res.end("Unauthorized");return}downloads++;res.writeHead(200,{"Content-Type":"application/pdf","Content-Disposition":"attachment; filename=qa.pdf"});res.end(pdf);return}
  if(p==="/api/projects"){json(res,{projects:rows,covers:[],categories:["Кухни"],stages:["Замер"]});return}
  if(p==="/public/prices"){json(res,{entries:[],updated:0});return}
  if(p==="/public/portfolio"){json(res,{projects:[],covers:{}});return}
@@ -20,12 +22,13 @@ const server=http.createServer((req,res)=>{
  res.writeHead(404);res.end();
 });
 (async()=>{await new Promise(r=>server.listen(0,"127.0.0.1",r));const b=await chromium.launch({headless:true});try{
- const base="http://127.0.0.1:"+server.address().port,p=await b.newPage({viewport:{width:390,height:844}}),errors=[];
+ const base="http://127.0.0.1:"+server.address().port,p=await b.newPage({viewport:{width:390,height:844},hasTouch:true,acceptDownloads:true}),errors=[];
  p.on("pageerror",e=>errors.push(e.message));await p.route("**/*",route=>route.request().url().startsWith(base+"/")?route.continue():route.abort());
  await p.goto(base+"/cabinet/");await p.locator("#workspace").waitFor({state:"visible"});await p.locator("#viewRequests").click();
  assert.equal(await p.locator("#requestList .request-item").count(),2);
  await p.locator("#requestSearch").fill("L-000123");assert.equal(await p.locator("#requestList .request-item").count(),1);assert.match(await p.locator("#requestList").innerText(),/L-000123/);
  await p.getByRole("button",{name:"Открыть заявку",exact:true}).click();assert.match(await p.locator("#requestOrigin").innerText(),/L-000123.*Коллекция изделий/);assert.equal(await p.locator("#publish").isVisible(),false);
+ const downloadButton=p.getByRole("button",{name:"Скачать файл",exact:true});const pending=p.waitForEvent("download");await downloadButton.tap();const file=await pending;assert.equal(file.suggestedFilename(),filename);assert.deepEqual(fs.readFileSync(await file.path()),pdf);assert.equal(downloads,1);assert.equal(b.contexts()[0].pages().length,1);deny=true;await downloadButton.tap();await p.waitForFunction(()=>document.getElementById("message").textContent.includes("Сессия истекла"));assert.equal(downloads,1);assert.equal(await downloadButton.isEnabled(),true);deny=false;console.log("PASS V5.61 private PDF mobile download, cookie authorization, original bytes and expired-session handling");
  await p.locator("#requestSearch").fill("bcdefa123456");assert.match(await p.locator("#requestList").innerText(),/L-000124/);assert.equal(await p.locator("#requestList .request-item").count(),1);
  await p.locator("#requestSearch").fill("");await p.getByRole("button",{name:"Коллекция изделий · 1",exact:true}).click();assert.match(await p.locator("#requestList").innerText(),/L-000123/);assert.equal(await p.locator("#requestList .request-item").count(),1);
  await p.goto(base+"/showroom/");const assets=fs.readdirSync(".").filter(f=>/^(?:scene|public)-[a-z0-9-]+\.webp$/.test(f));
