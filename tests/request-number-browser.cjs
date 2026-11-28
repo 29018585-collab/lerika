@@ -1,7 +1,7 @@
 "use strict";
 const {chromium}=require("playwright"),assert=require("node:assert/strict"),fs=require("node:fs"),http=require("node:http");
 const html=fs.readFileSync("index.html"),admin=fs.readFileSync("cabinet/templates/admin.html");
-const pdf=Buffer.from("%PDF-1.4\nQA document\n%%EOF"),filename="Кухня-QA.pdf";let deny=false,downloads=0;
+const pdf=Buffer.from("%PDF-1.4\nQA document\n%%EOF"),filename="Кухня-QA.pdf";let deny=false,downloads=0,clientStage=2,clientShared=true;
 const rows=[
  {id:"abcdef1234567890abcdef1234567890",request_number:"L-000123",request_source:"project",request_created:100,category:1,title:"Синтетическая заявка 123",description:"Тест",stage:1,status:"work",published:0,files:[{id:"qa-pdf",name:filename,stage:1,public:0,image:0}]},
  {id:"bcdefa1234567890bcdefa1234567890",request_number:"L-000124",request_source:"config",request_created:200,category:1,title:"Синтетическая заявка 124",description:"Тест",stage:1,status:"work",published:0,files:[]}
@@ -10,7 +10,9 @@ const json=(res,data)=>{res.writeHead(200,{"Content-Type":"application/json"});r
 const server=http.createServer((req,res)=>{
  if(req.method!=="GET"){res.writeHead(405);res.end();return}
  const p=new URL(req.url,"http://127.0.0.1").pathname;
- if(p==="/showroom/"){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(html);return}
+ if(p==="/showroom/"){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(req.url.includes("qa-client")?html.toString("utf8").replace(/(<meta name="lerika-app-origin" content=")[^"]+(")/,(_,a,b)=>a+"http://127.0.0.1:"+server.address().port+b):html);return}
+ if(p==="/api/client/session"){json(res,{name:"QA Client",email:"qa@example.invalid",orders:[{id:"qa-order",number:"L-000123",title:"Тест кухни",stage:clientStage,status:"work",created:100,files:clientShared?[{id:"qa-pdf",name:filename,stage:2}]:[]}]});return}
+ if(p==="/api/client/files/qa-pdf"){if(!clientShared){res.writeHead(404);res.end();return}res.writeHead(200,{"Content-Type":"application/octet-stream"});res.end(pdf);return}
  if(p==="/cabinet/"){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(admin);return}
  if(p==="/session"){res.setHeader("Set-Cookie","qa_session=1; Path=/; HttpOnly; SameSite=Strict");json(res,{csrf:"synthetic"});return}
  if(p==="/api/files/qa-pdf"){if(deny||!req.headers.cookie?.includes("qa_session=1")){res.writeHead(401);res.end("Unauthorized");return}downloads++;res.writeHead(200,{"Content-Type":"application/pdf","Content-Disposition":"attachment; filename=qa.pdf"});res.end(pdf);return}
@@ -38,6 +40,6 @@ const server=http.createServer((req,res)=>{
  assert.equal(await p.locator("#kitchen img").count(),5);
  assert.equal(await p.locator("#kitchen .lit").evaluateAll(v=>new Set(v.map(x=>x.src)).size),1);
  assert.equal(await p.locator("#kitchen .switch").count(),0);await p.waitForFunction(()=>document.getElementById("kitchen").classList.contains("on"));assert.equal(await p.locator("body").evaluate(e=>e.classList.contains("lights-on")),true);
- assert.deepEqual(errors,[]);
+ await p.goto(base+"/showroom/?qa-client#client");await p.locator("#client-profile").waitFor({state:"visible"});assert.match(await p.locator("#client-orders").innerText(),/L-000123/);assert.equal(await p.locator("#client-orders progress").getAttribute("value"),"2");const clientDownload=p.waitForEvent("download");await p.getByRole("button",{name:"Скачать "+filename,exact:true}).tap();const clientFile=await clientDownload;assert.equal(clientFile.suggestedFilename(),filename);assert.deepEqual(fs.readFileSync(await clientFile.path()),pdf);clientStage=3;clientShared=false;await p.locator("#client-refresh").tap();await p.waitForFunction(()=>document.querySelector("#client-orders progress").value===3);assert.equal(await p.getByRole("button",{name:"Скачать "+filename,exact:true}).count(),0);assert.deepEqual(errors,[]);console.log("PASS V5.64 client order cards, progress refresh, document download and revoked access");
  console.log("PASS V5.23 actual admin search/filter/number, legacy lookup, publication guard, 16 decoded WebP assets and illumination");
 }finally{await b.close();server.close()}})().catch(e=>{console.error(e);server.close();process.exitCode=1});
