@@ -130,6 +130,7 @@ if not SETUP_REQUIRED:
     CREATE TABLE IF NOT EXISTS design_briefs(project TEXT PRIMARY KEY REFERENCES projects(id), brief TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS clients(id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, password_hash TEXT NOT NULL, created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS client_requests(project TEXT PRIMARY KEY REFERENCES projects(id), client TEXT NOT NULL REFERENCES clients(id));
+    CREATE TABLE IF NOT EXISTS order_stage_history(project TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, seq INTEGER NOT NULL, from_stage INTEGER NOT NULL CHECK(from_stage BETWEEN 1 AND 6), from_status TEXT NOT NULL CHECK(from_status IN ('work','ready')), stage INTEGER NOT NULL CHECK(stage BETWEEN 1 AND 6), status TEXT NOT NULL CHECK(status IN ('work','ready')), created INTEGER NOT NULL, PRIMARY KEY(project,seq));
     CREATE TABLE IF NOT EXISTS client_project_approvals(project TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, client TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE, revision INTEGER NOT NULL, manifest TEXT NOT NULL, note TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('pending','approved','changes','superseded')), created INTEGER NOT NULL, decided INTEGER, comment TEXT NOT NULL DEFAULT '', PRIMARY KEY(project,client,revision));
     CREATE TABLE IF NOT EXISTS client_order_messages(id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, client TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE, author TEXT NOT NULL CHECK(author IN ('client','designer')), body TEXT NOT NULL, created INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS client_order_messages_thread ON client_order_messages(project,client,created,id);
@@ -891,6 +892,28 @@ def client_project_approval(project):
 def designer_project_approval(project):
     return project_approval(project,designer=True)
 
+def order_history(project,designer=False):
+    cid=None if designer else client_id()
+    if not designer and not cid: abort(401)
+    with db() as c:
+        r=c.execute("SELECT p.stage,p.status,d.created FROM projects p JOIN design_requests d ON d.id=p.id WHERE p.id=?",(project,)).fetchone()
+        if not r or (not designer and document_recipient(c,project)!=cid): abort(404)
+        changes=[dict(x) for x in c.execute("SELECT seq,from_stage,from_status,stage,status,created FROM order_stage_history WHERE project=? ORDER BY seq",(project,))]
+        if designer:
+            photos=[dict(x) for x in c.execute("SELECT id,name,stage FROM files WHERE project=? AND image=1 AND mime='image/jpeg' ORDER BY stage,id",(project,))]
+        else:
+            photos=[dict(x) for x in c.execute("SELECT f.id,f.name,f.stage FROM files f JOIN client_file_shares s ON s.file=f.id WHERE f.project=? AND s.client=? AND f.image=1 AND f.mime='image/jpeg' ORDER BY f.stage,f.id",(project,cid))]
+    return jsonify(created=r["created"],stage=r["stage"],status=r["status"],changes=changes,photos=photos)
+
+@app.get("/api/client/orders/<project>/history")
+def client_order_history(project):
+    return order_history(project)
+
+@app.get("/api/projects/<project>/history")
+@admin
+def designer_order_history(project):
+    return order_history(project,designer=True)
+
 @app.get("/api/client/session")
 def client_session():
     cid=client_id()
@@ -921,7 +944,9 @@ def client_file(fid):
     with db() as c:
         f=c.execute("SELECT f.* FROM files f JOIN client_file_shares s ON s.file=f.id JOIN clients cl ON cl.id=s.client WHERE f.id=? AND s.client=?",(fid,cid)).fetchone()
         if not f or document_recipient(c,f["project"])!=cid: abort(404)
-    response=send_file(io.BytesIO(f["data"]),mimetype="application/octet-stream",as_attachment=True,download_name=f["name"],max_age=0)
+    preview=request.args.get("preview")=="1"
+    if preview and not (f["image"] and f["mime"]=="image/jpeg"): abort(404)
+    response=send_file(io.BytesIO(f["data"]),mimetype="image/jpeg" if preview else "application/octet-stream",as_attachment=not preview,download_name=f["name"],max_age=0)
     response.headers["Cache-Control"]="private, no-store"
     return response
 
@@ -1193,6 +1218,9 @@ def edit_project(p):
         old=c.execute("SELECT stage,status FROM projects WHERE id=?",(p,)).fetchone()
         if not c.execute("UPDATE projects SET category=?,title=?,description=?,stage=?,status=?,published=?,updated=? WHERE id=?",rec).rowcount: abort(404)
         c.execute("DELETE FROM covers WHERE file IN (SELECT id FROM files WHERE project=?) AND category<>?",(p,rec[0]))
+        if old and (old["stage"],old["status"])!=(rec[3],rec[4]) and c.execute("SELECT 1 FROM design_requests WHERE id=?",(p,)).fetchone():
+            seq=c.execute("SELECT COALESCE(MAX(seq),0)+1 AS n FROM order_stage_history WHERE project=?",(p,)).fetchone()["n"]
+            c.execute("INSERT INTO order_stage_history VALUES(?,?,?,?,?,?,?)",(p,seq,old["stage"],old["status"],rec[3],rec[4],rec[6]))
         event=event_for_edit(c,p,old,rec[3],rec[4])
         recipient=notification_chat(c,event,KEY,os.environ.get("LERIKA_TELEGRAM_ADMIN_CHAT_ID","").strip(),os.environ.get("LERIKA_TG_CLIENT_PILOT",""),os.environ.get("LERIKA_TG_PILOT_CHAT_IDS",""))
     if event is not None and recipient:
