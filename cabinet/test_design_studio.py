@@ -94,6 +94,49 @@ class StudioTests(unittest.TestCase):
             self.assertEqual(download.status_code,200)
             self.assertIn("attachment",download.headers["Content-Disposition"])
             self.assertEqual(self.client.put("/api/files/"+f["id"],json={"public":True},headers={"X-CSRF":csrf},base_url=ORIGIN).status_code,400)
+    def test_v560_apartment_bundle_private_designer_download(self):
+        import json
+        headers={"Origin":ORIGIN,"X-Lerika-Studio":"5.8"}
+        client_headers={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        owner={"name":"Apartment QA","email":"apartment@example.invalid","password":"long-test-password-123","consent":True}
+        self.assertEqual(self.client.post("/api/client/register",json=owner,headers=client_headers,base_url=ORIGIN).status_code,201)
+        snapshot={"version":1,"source":"apartment","room":{"version":2,"activeRoom":1,"rooms":[{"id":1,"name":"Коридор"},{"id":2,"name":"Кухня"}]},"items":[{"id":1,"estimateRoomId":2,"type":"wardrobe"}]}
+        originals={
+            "LERIKA-Project.txt":json.dumps(snapshot,ensure_ascii=False).encode(),
+            "LERIKA-Estimate.csv":'Изделие;Группа;Стоимость\nКухня;корпус;1000'.encode("utf-8-sig"),
+            "LERIKA-Apartment-Plan.png":png(),
+            "LERIKA-Apartment-3D.png":png(),
+        }
+        def order():
+            return dict(self.data(request_id),source="plan",files=[(io.BytesIO(data),name) for name,data in originals.items()])
+        request_id=secrets.token_hex(16)
+        response=self.client.post("/api/order-requests",data=order(),headers=headers,base_url=ORIGIN,content_type="multipart/form-data")
+        self.assertEqual(response.status_code,201)
+        rid=response.json["id"]
+        retry=self.client.post("/api/order-requests",data=order(),headers=headers,base_url=ORIGIN,content_type="multipart/form-data")
+        self.assertEqual(retry.status_code,200)
+        self.assertEqual(retry.json["id"],rid)
+        self.assertEqual([x["id"] for x in self.client.get("/api/client/session",base_url=ORIGIN).json["orders"]],[rid])
+        other=app.test_client()
+        self.assertEqual(other.post("/api/client/register",json={**owner,"email":"other@example.invalid"},headers=client_headers,base_url=ORIGIN).status_code,201)
+        self.assertEqual(other.get("/api/client/session",base_url=ORIGIN).json["orders"],[])
+        self.assertEqual(other.get("/api/projects",base_url=ORIGIN).status_code,401)
+        self.assertEqual(self.client.get("/public/portfolio").json["projects"],[])
+        admin=app.test_client()
+        self.assertEqual(admin.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN).status_code,200)
+        projects=admin.get("/api/projects",base_url=ORIGIN).json["projects"]
+        self.assertEqual(len(projects),1)
+        project=projects[0]
+        self.assertEqual(project["id"],rid)
+        self.assertEqual({f["name"] for f in project["files"]},set(originals))
+        for f in project["files"]:
+            self.assertEqual(other.get("/api/files/"+f["id"],base_url=ORIGIN).status_code,401)
+            self.assertEqual(other.get("/public/photos/"+f["id"],base_url=ORIGIN).status_code,404)
+            downloaded=admin.get("/api/files/"+f["id"],base_url=ORIGIN)
+            self.assertEqual(downloaded.status_code,200)
+            self.assertEqual(downloaded.data,originals[f["name"]])
+            self.assertIn("attachment",downloaded.headers["Content-Disposition"])
+
     def test_universal_order_rejects_bad_archive_and_executable(self):
         for name in ("bad.zip","program.exe"):
             d=self.data();d["files"]=(io.BytesIO(b"not an archive"),name)
