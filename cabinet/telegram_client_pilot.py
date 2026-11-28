@@ -26,6 +26,9 @@ def registration(text,digest,db,lock,now=None):
     if text not in (JOIN,CONSENT,LEAVE):
         return None
     if text==JOIN:
+        with db() as c:
+            lock(c,82003)
+            c.execute("INSERT INTO telegram_pilot_pending(chat_key,expires) VALUES(?,?) ON CONFLICT(chat_key) DO UPDATE SET expires=excluded.expires",(digest,(int(time.time()) if now is None else now)+900))
         return ("Закрытый тест ЛериКа. Сохраняются защищённый идентификатор Telegram, время регистрации, "
                 "тестовые описания и вложения. Не отправляйте реальные адреса, контакты и документы. "
                 "Заявки видит администратор. Уведомления включаются отдельно. "
@@ -33,16 +36,26 @@ def registration(text,digest,db,lock,now=None):
     with db() as c:
         lock(c,82003)
         if text==CONSENT:
+            stamp=int(time.time()) if now is None else now
+            pending=c.execute("SELECT expires FROM telegram_pilot_pending WHERE chat_key=?",(digest,)).fetchone()
+            if not pending or pending["expires"]<=stamp:
+                return "Сначала нажмите «Зарегистрироваться в тесте» и прочитайте условия."
+            c.execute("DELETE FROM telegram_pilot_pending WHERE chat_key=?",(digest,))
             c.execute("INSERT INTO telegram_pilot_clients(chat_key,created) VALUES(?,?) ON CONFLICT(chat_key) DO NOTHING",(digest,int(time.time()) if now is None else now))
             return "Тестовая регистрация завершена. Можно создавать вымышленные заявки."
         c.execute("DELETE FROM telegram_test_subscriptions WHERE chat_key=?",(digest,))
         c.execute("DELETE FROM telegram_test_files WHERE chat_key=?",(digest,))
         c.execute("DELETE FROM telegram_test_drafts WHERE chat_key=?",(digest,))
         c.execute("DELETE FROM telegram_pilot_clients WHERE chat_key=?",(digest,))
+        c.execute("DELETE FROM telegram_pilot_pending WHERE chat_key=?",(digest,))
         return "Вы вышли из теста. Черновик удалён, уведомления отключены. Отправленные заявки остаются в кабинете."
 
-def registration_keyboard():
-    return {"keyboard":[[{"text":JOIN}],[{"text":CONSENT}],[{"text":"🌐 Инструменты сайта"}]],"resize_keyboard":True,"is_persistent":True}
+def registration_keyboard(show_consent=False):
+    rows=[[{"text":JOIN}]]
+    if show_consent:
+        rows.append([{"text":CONSENT}])
+    rows.append([{"text":"🌐 Инструменты сайта"}])
+    return {"keyboard":rows,"resize_keyboard":True,"is_persistent":True}
 
 def notification_chat(c,event,key,admin_chat,enabled,allowlist):
     if event is None:
