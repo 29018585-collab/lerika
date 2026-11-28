@@ -762,6 +762,15 @@ def client_telegram_link():
             return jsonify(ok=False,message="Код недействителен или привязка недоступна.")
         return jsonify(ok=True)
 
+def document_recipient(c,project):
+    direct=c.execute("SELECT cr.client FROM client_requests cr JOIN clients cl ON cl.id=cr.client WHERE cr.project=?",(project,)).fetchone()
+    if direct: return direct["client"]
+    from telegram_web_link import active_digests
+    allowed=active_digests(KEY,os.environ.get("LERIKA_TG_CLIENT_PILOT",""),os.environ.get("LERIKA_TG_PILOT_CHAT_IDS",""))
+    if not allowed: return None
+    row=c.execute("SELECT l.client,l.chat_key FROM telegram_test_owners o JOIN telegram_web_links l ON l.chat_key=o.chat_key JOIN telegram_pilot_clients t ON t.chat_key=l.chat_key JOIN clients cl ON cl.id=l.client JOIN projects p ON p.id=o.request_id WHERE o.request_id=? AND p.published=0",(project,)).fetchone()
+    return row["client"] if row and row["chat_key"] in allowed else None
+
 @app.get("/api/client/session")
 def client_session():
     cid=client_id()
@@ -780,7 +789,7 @@ def client_session():
             orders.extend(x for x in extra if x["id"] not in known)
             orders.sort(key=lambda x:x["created"],reverse=True)
         for order in orders:
-            order["files"]=[dict(f) for f in c.execute("SELECT f.id,f.name,f.stage FROM files f JOIN client_file_shares s ON s.file=f.id JOIN client_requests cr ON cr.project=f.project AND cr.client=s.client WHERE f.project=? AND s.client=? ORDER BY f.stage,f.id",(order["id"],cid))]
+            order["files"]=[dict(f) for f in c.execute("SELECT f.id,f.name,f.stage FROM files f JOIN client_file_shares s ON s.file=f.id WHERE f.project=? AND s.client=? ORDER BY f.stage,f.id",(order["id"],cid))] if document_recipient(c,order["id"])==cid else []
     for order in orders:
         order["number"]=request_number(order["number"]) if order["number"] is not None else order["id"][:12]
     return jsonify(name=row["name"],email=row["email"],orders=orders,telegram_link_available=bool(allowed),telegram_linked=linked,telegram_link_exists=bool(link))
@@ -790,8 +799,8 @@ def client_file(fid):
     cid=client_id()
     if not cid: abort(401)
     with db() as c:
-        f=c.execute("SELECT f.* FROM files f JOIN client_file_shares s ON s.file=f.id JOIN client_requests cr ON cr.project=f.project AND cr.client=s.client JOIN clients cl ON cl.id=s.client WHERE f.id=? AND s.client=?",(fid,cid)).fetchone()
-        if not f: abort(404)
+        f=c.execute("SELECT f.* FROM files f JOIN client_file_shares s ON s.file=f.id JOIN clients cl ON cl.id=s.client WHERE f.id=? AND s.client=?",(fid,cid)).fetchone()
+        if not f or document_recipient(c,f["project"])!=cid: abort(404)
     response=send_file(io.BytesIO(f["data"]),mimetype="application/octet-stream",as_attachment=True,download_name=f["name"],max_age=0)
     response.headers["Cache-Control"]="private, no-store"
     return response
@@ -1032,8 +1041,9 @@ def projects():
                 p["request_source"]=matched
                 p["request_created"]=intake["created"]
                 p["request_number"]=existing_number(c,p["id"]) or p["id"][:12]
-            p["client_share_available"]=bool(c.execute("SELECT 1 FROM client_requests WHERE project=?",(p["id"],)).fetchone())
-            p["files"]=[dict(f) for f in c.execute("SELECT f.id,f.stage,f.name,f.mime,f.image,f.public,CASE WHEN s.file IS NULL THEN 0 ELSE 1 END AS client_shared FROM files f LEFT JOIN client_file_shares s ON s.file=f.id LEFT JOIN client_requests cr ON cr.project=f.project AND cr.client=s.client WHERE f.project=? ORDER BY f.stage,f.id",(p["id"],))]
+            recipient=document_recipient(c,p["id"])
+            p["client_share_available"]=bool(recipient)
+            p["files"]=[dict(f) for f in c.execute("SELECT f.id,f.stage,f.name,f.mime,f.image,f.public,CASE WHEN s.client=? THEN 1 ELSE 0 END AS client_shared FROM files f LEFT JOIN client_file_shares s ON s.file=f.id WHERE f.project=? ORDER BY f.stage,f.id",(recipient,p["id"]))]
         covers=[dict(x) for x in c.execute("SELECT * FROM covers")]
     return jsonify(projects=rows,covers=covers,categories=CATEGORIES,stages=STAGES)
 
@@ -1134,11 +1144,12 @@ def share_client_file(fid):
     if not isinstance(d,dict) or type(d.get("shared")) is not bool: abort(400)
     with db() as c:
         lock(c,82003)
-        f=c.execute("SELECT cr.client FROM files f LEFT JOIN client_requests cr ON cr.project=f.project WHERE f.id=?",(fid,)).fetchone()
+        f=c.execute("SELECT project FROM files WHERE id=?",(fid,)).fetchone()
         if not f: abort(404)
         if d["shared"]:
-            if not f["client"]: abort(409)
-            c.execute("INSERT INTO client_file_shares(file,client) VALUES(?,?) ON CONFLICT(file) DO UPDATE SET client=excluded.client",(fid,f["client"]))
+            recipient=document_recipient(c,f["project"])
+            if not recipient: abort(409)
+            c.execute("INSERT INTO client_file_shares(file,client) VALUES(?,?) ON CONFLICT(file) DO UPDATE SET client=excluded.client",(fid,recipient))
         else:
             c.execute("DELETE FROM client_file_shares WHERE file=?",(fid,))
     return jsonify(ok=True)
