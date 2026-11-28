@@ -186,6 +186,31 @@ def admin(f):
 def home():
     return redirect("/showroom/",code=302)
 
+def notify_telegram_order(number,source,room,attachment_count):
+    """Send only a minimal alert after the private request has been committed."""
+    token=os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip()
+    chat_id=os.environ.get("LERIKA_TELEGRAM_ADMIN_CHAT_ID","").strip()
+    if not token or not chat_id:
+        return False
+    if not re.fullmatch(r"[0-9]+:[A-Za-z0-9_-]{20,100}",token) or not re.fullmatch(r"-?[0-9]{1,20}",chat_id):
+        app.logger.warning("Telegram notification configuration is invalid")
+        return False
+    message="ЛериКа · Новая заявка "+number+"\nИсточник: "+REQUEST_SOURCES[source]+"\nПомещение: "+room+"\nВложений: "+str(attachment_count)+"\nОткрыть закрытый кабинет: "+PUBLIC_ORIGIN+"/cabinet/"
+    body=json.dumps({"chat_id":chat_id,"text":message,"link_preview_options":{"is_disabled":True}},ensure_ascii=False).encode("utf-8")
+    try:
+        req=Request("https://api.telegram.org/bot"+token+"/sendMessage",data=body,headers={"Content-Type":"application/json"},method="POST")
+        with urlopen(req,timeout=4) as response:
+            result=json.loads(response.read(65536))
+        if not isinstance(result,dict) or result.get("ok") is not True:
+            app.logger.warning("Telegram notification was not accepted")
+            return False
+        return True
+    except Exception:
+        # Never log the exception or request URL: they may contain the bot token.
+        app.logger.warning("Telegram notification failed; the order remains in the cabinet")
+        return False
+
+
 @app.get("/support/telegram")
 def support_telegram():
     username=os.environ.get("LERIKA_SUPPORT_BOT_USERNAME","").strip().lstrip("@")
@@ -645,6 +670,8 @@ def design_request():
         cid=client_id()
         if cid and c.execute("SELECT id FROM clients WHERE id=?",(cid,)).fetchone():
             c.execute("INSERT INTO client_requests VALUES(?,?)",(rid,cid))
+    # The database transaction has ended. A Telegram error must not roll back intake.
+    notify_telegram_order(number,source,room,len(attachments))
     return jsonify(id=rid,number=number),201
 
 @app.get("/api/projects")
