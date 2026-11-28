@@ -130,6 +130,7 @@ if not SETUP_REQUIRED:
     CREATE TABLE IF NOT EXISTS design_briefs(project TEXT PRIMARY KEY REFERENCES projects(id), brief TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS clients(id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, password_hash TEXT NOT NULL, created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS client_requests(project TEXT PRIMARY KEY REFERENCES projects(id), client TEXT NOT NULL REFERENCES clients(id));
+    CREATE TABLE IF NOT EXISTS client_file_shares(file TEXT PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE, client TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE);
     CREATE TABLE IF NOT EXISTS telegram_web_links(client TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE, chat_key TEXT UNIQUE NOT NULL, created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS telegram_web_pending(client TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE, token_hash TEXT UNIQUE NOT NULL, expires INTEGER NOT NULL, chat_key TEXT, proof_hash TEXT);
     CREATE TABLE IF NOT EXISTS client_limits(action TEXT PRIMARY KEY, count INTEGER NOT NULL, since INTEGER NOT NULL);
@@ -778,9 +779,22 @@ def client_session():
             known={x["id"] for x in orders}
             orders.extend(x for x in extra if x["id"] not in known)
             orders.sort(key=lambda x:x["created"],reverse=True)
+        for order in orders:
+            order["files"]=[dict(f) for f in c.execute("SELECT f.id,f.name,f.stage FROM files f JOIN client_file_shares s ON s.file=f.id JOIN client_requests cr ON cr.project=f.project AND cr.client=s.client WHERE f.project=? AND s.client=? ORDER BY f.stage,f.id",(order["id"],cid))]
     for order in orders:
         order["number"]=request_number(order["number"]) if order["number"] is not None else order["id"][:12]
     return jsonify(name=row["name"],email=row["email"],orders=orders,telegram_link_available=bool(allowed),telegram_linked=linked,telegram_link_exists=bool(link))
+
+@app.get("/api/client/files/<fid>")
+def client_file(fid):
+    cid=client_id()
+    if not cid: abort(401)
+    with db() as c:
+        f=c.execute("SELECT f.* FROM files f JOIN client_file_shares s ON s.file=f.id JOIN client_requests cr ON cr.project=f.project AND cr.client=s.client JOIN clients cl ON cl.id=s.client WHERE f.id=? AND s.client=?",(fid,cid)).fetchone()
+        if not f: abort(404)
+    response=send_file(io.BytesIO(f["data"]),mimetype="application/octet-stream",as_attachment=True,download_name=f["name"],max_age=0)
+    response.headers["Cache-Control"]="private, no-store"
+    return response
 
 @app.get("/api/clients")
 @admin
@@ -1018,7 +1032,8 @@ def projects():
                 p["request_source"]=matched
                 p["request_created"]=intake["created"]
                 p["request_number"]=existing_number(c,p["id"]) or p["id"][:12]
-            p["files"]=[dict(f) for f in c.execute("SELECT id,stage,name,mime,image,public FROM files WHERE project=? ORDER BY stage,id",(p["id"],))]
+            p["client_share_available"]=bool(c.execute("SELECT 1 FROM client_requests WHERE project=?",(p["id"],)).fetchone())
+            p["files"]=[dict(f) for f in c.execute("SELECT f.id,f.stage,f.name,f.mime,f.image,f.public,CASE WHEN s.file IS NULL THEN 0 ELSE 1 END AS client_shared FROM files f LEFT JOIN client_file_shares s ON s.file=f.id LEFT JOIN client_requests cr ON cr.project=f.project AND cr.client=s.client WHERE f.project=? ORDER BY f.stage,f.id",(p["id"],))]
         covers=[dict(x) for x in c.execute("SELECT * FROM covers")]
     return jsonify(projects=rows,covers=covers,categories=CATEGORIES,stages=STAGES)
 
@@ -1110,6 +1125,22 @@ def set_cover(cat):
         f=c.execute("SELECT f.id FROM files f JOIN projects p ON p.id=f.project WHERE f.id=? AND f.image=1 AND f.public=1 AND p.published=1 AND NOT EXISTS (SELECT 1 FROM design_requests dr WHERE dr.id=p.id) AND p.category=?",(data["file"],cat)).fetchone()
         if not f: abort(400)
         c.execute("INSERT INTO covers VALUES(?,?) ON CONFLICT(category) DO UPDATE SET file=excluded.file",(cat,f["id"]))
+    return jsonify(ok=True)
+
+@app.put("/api/files/<fid>/client-share")
+@admin
+def share_client_file(fid):
+    d=request.get_json(silent=True)
+    if not isinstance(d,dict) or type(d.get("shared")) is not bool: abort(400)
+    with db() as c:
+        lock(c,82003)
+        f=c.execute("SELECT cr.client FROM files f LEFT JOIN client_requests cr ON cr.project=f.project WHERE f.id=?",(fid,)).fetchone()
+        if not f: abort(404)
+        if d["shared"]:
+            if not f["client"]: abort(409)
+            c.execute("INSERT INTO client_file_shares(file,client) VALUES(?,?) ON CONFLICT(file) DO UPDATE SET client=excluded.client",(fid,f["client"]))
+        else:
+            c.execute("DELETE FROM client_file_shares WHERE file=?",(fid,))
     return jsonify(ok=True)
 
 @app.get("/api/files/<fid>")
