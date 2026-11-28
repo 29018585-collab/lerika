@@ -130,6 +130,8 @@ if not SETUP_REQUIRED:
     CREATE TABLE IF NOT EXISTS design_briefs(project TEXT PRIMARY KEY REFERENCES projects(id), brief TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS clients(id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, password_hash TEXT NOT NULL, created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS client_requests(project TEXT PRIMARY KEY REFERENCES projects(id), client TEXT NOT NULL REFERENCES clients(id));
+    CREATE TABLE IF NOT EXISTS client_order_messages(id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, client TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE, author TEXT NOT NULL CHECK(author IN ('client','designer')), body TEXT NOT NULL, created INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS client_order_messages_thread ON client_order_messages(project,client,created,id);
     CREATE TABLE IF NOT EXISTS client_file_shares(file TEXT PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE, client TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE);
     CREATE TABLE IF NOT EXISTS telegram_web_links(client TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE, chat_key TEXT UNIQUE NOT NULL, created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS telegram_web_pending(client TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE, token_hash TEXT UNIQUE NOT NULL, expires INTEGER NOT NULL, chat_key TEXT, proof_hash TEXT);
@@ -770,6 +772,36 @@ def document_recipient(c,project):
     if not allowed: return None
     row=c.execute("SELECT l.client,l.chat_key FROM telegram_test_owners o JOIN telegram_web_links l ON l.chat_key=o.chat_key JOIN telegram_pilot_clients t ON t.chat_key=l.chat_key JOIN clients cl ON cl.id=l.client JOIN projects p ON p.id=o.request_id WHERE o.request_id=? AND p.published=0",(project,)).fetchone()
     return row["client"] if row and row["chat_key"] in allowed else None
+
+def order_thread(project,designer=False):
+    cid=None if designer else client_id()
+    if not designer and not cid: abort(401)
+    if request.method=="POST":
+        if not designer: client_origin()
+        d=request.get_json(silent=True)
+        if not isinstance(d,dict) or not isinstance(d.get("text"),str): abort(400)
+        body=d["text"].strip()
+        if not 1<=len(body)<=2000 or "\x00" in body: abort(400)
+        reserve_limits([(limit_key("order-message",cid or "designer"),60,3600)])
+    with db() as c:
+        if request.method=="POST": lock(c,82003)
+        owner=document_recipient(c,project)
+        if not owner or (not designer and owner!=cid): abort(404)
+        if request.method=="POST":
+            count=c.execute("SELECT COUNT(*) AS n FROM client_order_messages WHERE project=? AND client=?",(project,owner)).fetchone()["n"]
+            if count>=200: abort(413)
+            c.execute("INSERT INTO client_order_messages VALUES(?,?,?,?,?,?)",(secrets.token_hex(16),project,owner,"designer" if designer else "client",body,int(time.time())))
+        rows=[dict(x) for x in c.execute("SELECT id,author,body,created FROM client_order_messages WHERE project=? AND client=? ORDER BY created,id",(project,owner))]
+    return jsonify(messages=rows),201 if request.method=="POST" else 200
+
+@app.route("/api/client/orders/<project>/messages",methods=["GET","POST"])
+def client_order_messages(project):
+    return order_thread(project)
+
+@app.route("/api/projects/<project>/messages",methods=["GET","POST"])
+@admin
+def designer_order_messages(project):
+    return order_thread(project,designer=True)
 
 @app.get("/api/client/session")
 def client_session():
