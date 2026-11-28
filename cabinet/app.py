@@ -30,7 +30,7 @@ if not SETUP_REQUIRED and (len(KEY)<32 or not PASSWORD.startswith(("scrypt:","pb
     raise RuntimeError("Set SESSION_SECRET (32+ random characters) and ADMIN_PASSWORD_HASH")
 app=Flask(__name__)
 app.config.update(SECRET_KEY=KEY if not SETUP_REQUIRED else None,SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SECURE=True,SESSION_COOKIE_SAMESITE="Strict",MAX_CONTENT_LENGTH=16*1024*1024)
-REQUEST_SOURCES={"project":"Коллекция изделий","3d":"3D-конструктор","ai":"Дизайн-студия","config":"Конфигуратор","plan":"Планировщик помещения","engineering":"Инженерная лаборатория","order":"Прямой заказ","legacy":"Источник не указан","support":"Поддержка","partner":"Сотрудничество"}
+REQUEST_SOURCES={"project":"Коллекция изделий","3d":"3D-конструктор","ai":"Дизайн-студия","config":"Конфигуратор","plan":"Планировщик помещения","engineering":"Инженерная лаборатория","order":"Прямой заказ","legacy":"Источник не указан","support":"Поддержка","partner":"Сотрудничество","telegram":"Telegram"}
 CATEGORIES=["Кухни","Шкафы","Прихожие","Спальни","Детские","Гостиные","Гардеробные","Нестандартные системы хранения"]
 STAGES=["Исходное помещение","Замеры и эскизы","3D-проект","Изготовление","Монтаж","Готовая мебель"]
 ORIGIN="https://29018585-collab.github.io"
@@ -118,6 +118,7 @@ if not SETUP_REQUIRED:
     CREATE TABLE IF NOT EXISTS covers(category INTEGER PRIMARY KEY CHECK(category BETWEEN 1 AND 8), file TEXT NOT NULL REFERENCES files(id));
     CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY CHECK(id=1), count INTEGER NOT NULL, since INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS design_requests(id TEXT PRIMARY KEY, created INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS telegram_test_drafts(chat_key TEXT PRIMARY KEY, code TEXT NOT NULL, brief TEXT NOT NULL, expires INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS request_numbers(number INTEGER PRIMARY KEY, request_id TEXT NOT NULL UNIQUE REFERENCES design_requests(id));
     CREATE TABLE IF NOT EXISTS request_sequence(id INTEGER PRIMARY KEY CHECK(id=1), last_number INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS design_briefs(project TEXT PRIMARY KEY REFERENCES projects(id), brief TEXT NOT NULL);
@@ -348,7 +349,20 @@ def telegram_webhook():
         except TooManyRequests:
             return fallback()
         return classify(query,key,LERIKA_AI_MODEL)
-    answer,markup=answer_message(text,PUBLIC_ORIGIN,is_admin,classify_preview if is_admin else None)
+    pilot=None
+    if is_admin:
+        from telegram_intake import handle_test_order
+        try:
+            pilot=handle_test_order(text,digest,KEY,db,lock,allocate_number,existing_number,reserve_limits,notify_telegram_order)
+        except TooManyRequests:
+            pilot="Достигнут лимит тестовых заявок. Попробуйте позже."
+        except Exception:
+            app.logger.warning("Telegram test order could not be completed")
+            pilot="Не удалось завершить действие. Проверьте кабинет; при необходимости повторите команду подтверждения."
+    if pilot is not None:
+        answer,markup=pilot,None
+    else:
+        answer,markup=answer_message(text,PUBLIC_ORIGIN,is_admin,classify_preview if is_admin else None)
     # Telegram can execute a Bot API method from the webhook response.
     # This avoids another outbound request and never exposes the bot token.
     result={"method":"sendMessage","chat_id":cid,"text":answer,"link_preview_options":{"is_disabled":True}}
