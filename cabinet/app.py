@@ -773,7 +773,37 @@ def document_recipient(c,project):
     row=c.execute("SELECT l.client,l.chat_key FROM telegram_test_owners o JOIN telegram_web_links l ON l.chat_key=o.chat_key JOIN telegram_pilot_clients t ON t.chat_key=l.chat_key JOIN clients cl ON cl.id=l.client JOIN projects p ON p.id=o.request_id WHERE o.request_id=? AND p.published=0",(project,)).fetchone()
     return row["client"] if row and row["chat_key"] in allowed else None
 
+def order_activity_event(c,project,owner,kind):
+    # Only an explicitly linked, enrolled and subscribed pilot client can receive alerts.
+    from telegram_web_link import active_digests
+    from telegram_client_pilot import notification_chat
+    number=existing_number(c,project)
+    if not number: return None
+    if kind=="client-message":
+        chat=os.environ.get("LERIKA_TELEGRAM_ADMIN_CHAT_ID","").strip()
+        if not re.fullmatch(r"-?[0-9]{1,20}",chat): return None
+        return (chat,number,kind)
+    row=c.execute("SELECT l.chat_key FROM telegram_web_links l JOIN telegram_pilot_clients t ON t.chat_key=l.chat_key JOIN telegram_test_subscriptions s ON s.chat_key=l.chat_key WHERE l.client=?",(owner,)).fetchone()
+    allowed=active_digests(KEY,os.environ.get("LERIKA_TG_CLIENT_PILOT",""),os.environ.get("LERIKA_TG_PILOT_CHAT_IDS",""))
+    if not row or row["chat_key"] not in allowed: return None
+    chat=notification_chat(c,(row["chat_key"],),KEY,"",os.environ.get("LERIKA_TG_CLIENT_PILOT",""),os.environ.get("LERIKA_TG_PILOT_CHAT_IDS",""))
+    return (chat,number,kind) if chat else None
+
+def deliver_order_activity(event):
+    if not event: return False
+    from telegram_core import bot_call
+    chat,number,kind=event
+    labels={"client-message":"Новое сообщение от клиента","designer-message":"Новое сообщение от дизайнера","document":"Новый документ от дизайнера"}
+    if kind not in labels: return False
+    path="/cabinet/" if kind=="client-message" else "/showroom/#client"
+    try:
+        result=bot_call(os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip(),"sendMessage",{"chat_id":int(chat),"text":"ЛериКа · Заявка "+number+"\n"+labels[kind]+"\nОткройте личный кабинет: "+PUBLIC_ORIGIN+path,"link_preview_options":{"is_disabled":True}})
+        return isinstance(result,dict) and type(result.get("message_id")) is int
+    except Exception:
+        return False
+
 def order_thread(project,designer=False):
+    event=None
     cid=None if designer else client_id()
     if not designer and not cid: abort(401)
     if request.method=="POST":
@@ -791,7 +821,9 @@ def order_thread(project,designer=False):
             count=c.execute("SELECT COUNT(*) AS n FROM client_order_messages WHERE project=? AND client=?",(project,owner)).fetchone()["n"]
             if count>=200: abort(413)
             c.execute("INSERT INTO client_order_messages VALUES(?,?,?,?,?,?)",(secrets.token_hex(16),project,owner,"designer" if designer else "client",body,int(time.time())))
+            event=order_activity_event(c,project,owner,"designer-message" if designer else "client-message")
         rows=[dict(x) for x in c.execute("SELECT id,author,body,created FROM client_order_messages WHERE project=? AND client=? ORDER BY created,id",(project,owner))]
+    if event and not deliver_order_activity(event): app.logger.warning("Order activity notification not delivered")
     return jsonify(messages=rows),201 if request.method=="POST" else 200
 
 @app.route("/api/client/orders/<project>/messages",methods=["GET","POST"])
@@ -1172,6 +1204,7 @@ def set_cover(cat):
 @app.put("/api/files/<fid>/client-share")
 @admin
 def share_client_file(fid):
+    event=None
     d=request.get_json(silent=True)
     if not isinstance(d,dict) or type(d.get("shared")) is not bool: abort(400)
     with db() as c:
@@ -1181,9 +1214,12 @@ def share_client_file(fid):
         if d["shared"]:
             recipient=document_recipient(c,f["project"])
             if not recipient: abort(409)
+            previous=c.execute("SELECT client FROM client_file_shares WHERE file=?",(fid,)).fetchone()
             c.execute("INSERT INTO client_file_shares(file,client) VALUES(?,?) ON CONFLICT(file) DO UPDATE SET client=excluded.client",(fid,recipient))
+            if not previous or previous["client"]!=recipient: event=order_activity_event(c,f["project"],recipient,"document")
         else:
             c.execute("DELETE FROM client_file_shares WHERE file=?",(fid,))
+    if event and not deliver_order_activity(event): app.logger.warning("Order activity notification not delivered")
     return jsonify(ok=True)
 
 @app.get("/api/files/<fid>")
