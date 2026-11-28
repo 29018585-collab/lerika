@@ -6,7 +6,8 @@ const server=http.createServer((req,res)=>{if(req.url==="/"){res.writeHead(200,{
 const page=await browser.newPage({viewport:{width:390,height:844},deviceScaleFactor:1,hasTouch:true,acceptDownloads:true});const errors=[];page.on("pageerror",e=>errors.push(e.message));let rejectDelete=false;page.on("dialog",d=>rejectDelete?d.dismiss():d.accept());
 await page.goto("http://127.0.0.1:"+server.address().port+"/#design-lab/plan",{waitUntil:"domcontentloaded"});
 await page.locator("#lp-view").waitFor({state:"visible"});
-assert.equal(await page.locator("#lp-type option").count(),19);
+assert.equal(await page.locator("#lp-type option").count(),66);
+assert.equal(await page.locator("#lp-type option").evaluateAll(opts=>new Set(opts.map(o=>o.value)).size),66);
 assert.equal(await page.locator("#lp-body option").count(),68);
 assert.match(await page.locator("#lp-layout-status").textContent(),/не пересекаются/);
 assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),"mobile overflow");
@@ -58,7 +59,8 @@ console.log("PASS V5.18 four live sheets, thickness, dimensions, validation, 68 
 await page.locator("#lp-camera-right").click();await page.locator("#lp-view").screenshot({path:"planner-3d-mobile.png"});
 await page.locator("#lp-2d").click();await page.locator("#lp-view").screenshot({path:"planner-2d-mobile.png"});
 await page.locator("#lp-fw").fill("100");await page.locator("#lp-item-apply").click();assert.equal(await page.locator("#lp-item-status").getAttribute("data-state"),"error");
-await page.locator("#lp-fw").fill("1800");await page.locator("#lp-x").fill("3000");await page.locator("#lp-z").fill("100");await page.locator("#lp-item-apply").click();assert.equal(await page.locator("#lp-csv").isDisabled(),true);
+const priorPlacement=await page.evaluate(()=>LerikaRoomProject.snapshot());
+await page.locator("#lp-fw").fill("1800");await page.locator("#lp-x").fill("3000");await page.locator("#lp-z").fill("100");await page.locator("#lp-item-apply").click();assert.equal(await page.locator("#lp-item-status").getAttribute("data-state"),"error");assert.deepEqual(await page.evaluate(()=>LerikaRoomProject.snapshot()),priorPlacement);assert.ok(await page.locator("#lp-csv").isEnabled());
 await page.locator("#lp-x").fill("100");await page.locator("#lp-item-apply").click();assert.equal(await page.locator("#lp-csv").isEnabled(),true);
 await page.locator("#lp-local-save").click();await page.locator("#lp-clear").click();assert.equal(await page.locator("#lp-csv").isDisabled(),true);
 await page.locator("#lp-local-load").click();assert.equal(await page.locator("#lp-csv").isEnabled(),true);
@@ -103,8 +105,8 @@ await page.locator("#lz-close").tap();
 const actualDepth=await page.evaluate(()=>LerikaRoomPlanner.model(LerikaRoomProject.snapshot().items[0]).d);const roomDepth=initial3D.r.d;await page.locator("#lp-z").fill(String(Math.floor(roomDepth-actualDepth)));await page.locator("#lp-item-apply").click();
 assert.ok(await page.locator("#lp-csv").isEnabled());
 await page.locator("#lz-open-lp-view").click();const wallState=await page.evaluate(()=>LerikaRoomProject.snapshot());
-await page.locator("#lz-turn-right").tap();assert.deepEqual(await page.evaluate(()=>LerikaRoomProject.snapshot()),wallState,"blocked 3D rotation must not mutate the room");
-assert.match(await page.locator("#lz-room-status").innerText(),/пересекает/);
+await page.locator("#lz-turn-right").tap();const wallTurn=await page.evaluate(()=>{const s=LerikaRoomProject.snapshot();return {rot:s.items[0].rot,valid:LerikaRoomPlanner.inspect(s.r,s.items,s.openings).ok}});assert.equal(wallTurn.rot,(wallState.items[0].rot+1)%4);assert.ok(wallTurn.valid,"rotation must fit within room when space is available");
+await page.locator("#lz-turn-left").tap();
 await page.locator("#lz-close").tap();await page.locator("#lp-z").fill("1000");await page.locator("#lp-item-apply").click();
 await page.locator("#lp-2d").click();await page.locator("#lz-open-lp-view").click();
 const initialTurn=await page.evaluate(()=>LerikaRoomProject.snapshot());
@@ -121,7 +123,7 @@ await page.locator("#lp-demo").click();await page.locator("#lp-remove-view").cli
 await page.locator("#lp-clear").click();await page.locator("#lp-3d").click();await page.locator("#lz-open-lp-view").click();
 assert.equal(await page.locator('[data-lz-panel="rotation"]').count(),0);
 assert.ok(await page.locator("#lz-camera-left").isEnabled());assert.ok(await page.locator("#lz-add-item").isEnabled());
-await page.locator("#lz-add-item").tap();assert.equal(await page.locator("#lz-add-type option").count(),19);
+await page.locator("#lz-add-item").tap();assert.equal(await page.locator("#lz-add-type option").count(),66);
 await page.locator("#lz-add-type").selectOption("bed");await page.locator("#lz-sheet-body").getByRole("button",{name:"Добавить на план",exact:true}).first().tap();
 assert.equal(await page.locator("#lz-sheet").isVisible(),false);assert.equal(await page.locator("#lz-dialog").isVisible(),true);assert.equal((await page.evaluate(()=>LerikaRoomProject.snapshot())).items[0].type,"bed");
 assert.equal(await page.locator("#lz-item-pick").inputValue(),"1");
@@ -144,7 +146,7 @@ await panel("color");await page.locator("#lz-field-body").selectOption("#48494b"
 await page.locator("#lz-add-item").tap();await page.locator("#lz-add-type").selectOption("wardrobe");await page.locator("#lz-sheet-body").getByRole("button",{name:"Добавить на план",exact:true}).first().tap();
 const mixed=await page.evaluate(()=>{const list=LerikaRoomProject.snapshot().items;return {items:list,a:LerikaProject.compute(list),b:LerikaProject.compute(list.filter(v=>!LerikaRoomPlanner.isAppliance(v.type)))}});assert.deepEqual(mixed.a,mixed.b);assert.equal(mixed.items.length,2);
 await page.locator("#lz-item-pick").selectOption("1");await page.locator("#lz-close").tap();assert.ok(await page.locator("#le-from-plan").isDisabled());
-await page.locator("#lp-order").click();await page.locator("#estimate-panel").waitFor({state:"visible"});assert.match(await page.locator("#estimate-lines").innerText(),/Техника · только для планировки/);
+await page.locator("#lp-order").click();await page.locator("#estimate-panel").waitFor({state:"visible"});assert.match(await page.locator("#estimate-lines").innerText(),/техника · только для планировки/i);
 await page.evaluate(()=>location.hash="#design-lab/plan");await page.locator("#lp-view").waitFor({state:"visible"});await page.reload();await page.locator("#lp-view").waitFor({state:"visible"});assert.deepEqual((await page.evaluate(()=>LerikaRoomProject.snapshot())).items,mixed.items);
 console.log("PASS appliances in zoom, dimensions, color, rotate, no production parts or estimate changes, engineering disabled, mixed reload");
 console.log("PASS V5.23.1 touch selection, list selection, cancel/confirm deletion, rotate both ways in 2D, empty state, autosave and inline delete");
