@@ -1507,9 +1507,10 @@ function renderApartmentWizard(root,ed,trigger){
  function preview(){
   const cfg=spec(),sig=JSON.stringify(cfg);
   if(signature!==sig){layout=null;doorOffsets={};signature=sig;zoom=1;panX=panZ=0;blocked=""}
+  if(!layout){const auto=ed.buildApartmentDraft(cfg);if(!auto.error)layout=snapshot(auto)}
   const draft=ed.manualApartmentDraft(cfg,layout,doorOffsets);valid=draft.error?null:draft;
   const g=canvas.getContext("2d");g.fillStyle="#e8dfd1";g.fillRect(0,0,700,420);
-  if(!valid){say(draft.error);apply.disabled=true;return}
+  if(!valid){say(draft.error);apply.disabled=true;rotate.disabled=true;doorFields.replaceChildren();return}
   if(!gesture||!viewBox){
    const rr=draft.rooms,minX=Math.min(...rr.map(r=>r.x)),minZ=Math.min(...rr.map(r=>r.z)),maxX=Math.max(...rr.map(r=>r.x+r.plan.r.w)),maxZ=Math.max(...rr.map(r=>r.z+r.plan.r.d)),scale=Math.min(620/(maxX-minX),340/(maxZ-minZ))*zoom;
    viewBox={scale,ox:350-(maxX+minX)*scale/2+panX,oz:210-(maxZ+minZ)*scale/2+panZ};
@@ -1524,7 +1525,8 @@ function renderApartmentWizard(root,ed,trigger){
     const l=make("label",link.a+" ↔ "+link.b+" · отступ двери, мм"),input=make("input");input.type="number";input.min="0";input.max=String(link.max);input.step="10";input.value=String(link.offset);input.onchange=()=>{const v=Number(input.value);if(Number.isSafeInteger(v)&&v>=0&&v<=link.max){doorOffsets[link.key]=v;preview()}else input.value=String(link.offset)};l.append(input);doorFields.append(l);
    }
   }
-  say(blocked||draft.warning||("Помещений: "+draft.rooms.length+" · площадь "+draft.area.toFixed(2)+" м² · коридор "+draft.length+" × "+cfg.corridorDepth+" мм."));
+  const hall=draft.rooms.find(r=>r.id===1).plan.r;
+  say(blocked||draft.warning||("Помещений: "+draft.rooms.length+" · площадь "+draft.area.toFixed(2)+" м² · коридор "+hall.w+" × "+hall.d+" мм."));
   apply.disabled=!!draft.warning;
  }
  function paint(){
@@ -1542,7 +1544,7 @@ function renderApartmentWizard(root,ed,trigger){
    const candidates=(arr,v)=>[...new Set(arr.filter(n=>Math.abs(n-v)<=threshold))].sort((a,b)=>Math.abs(a-v)-Math.abs(b-v));
    // Prefer exact wall/edge alignment when within the touch threshold.
    const ax=candidates(xs.slice(1),x),az=candidates(zs.slice(1),z);
-   const attempts=[...(ax.length&&az.length?[[ax[0],az[0]]]:[]),...(ax.length?[[ax[0],z]]:[]),...(az.length?[[x,az[0]]]:[]),[x,z]];
+   const attempts=[...ax.slice(0,3).flatMap(nx=>az.slice(0,3).map(nz=>[nx,nz])),...ax.slice(0,3).map(nx=>[nx,z]),...az.slice(0,3).map(nz=>[x,nz])];attempts.sort((a,b)=>Math.hypot(a[0]-x,a[1]-z)-Math.hypot(b[0]-x,b[1]-z));attempts.push([x,z]);
    for(const [nx,nz] of attempts){if(commit(nx,nz))return true}
   }else if(commit(x,z))return true;
   blocked="Пересечение помещений. Выберите свободное место.";say(blocked);return false;
