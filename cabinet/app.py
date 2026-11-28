@@ -121,6 +121,8 @@ if not SETUP_REQUIRED:
     CREATE TABLE IF NOT EXISTS telegram_test_drafts(chat_key TEXT PRIMARY KEY, code TEXT NOT NULL, brief TEXT NOT NULL, expires INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS telegram_test_files(chat_key TEXT NOT NULL REFERENCES telegram_test_drafts(chat_key) ON DELETE CASCADE, code TEXT NOT NULL, checksum TEXT NOT NULL, name TEXT NOT NULL, data BLOB NOT NULL, PRIMARY KEY(chat_key,code,checksum));
     CREATE TABLE IF NOT EXISTS request_numbers(number INTEGER PRIMARY KEY, request_id TEXT NOT NULL UNIQUE REFERENCES design_requests(id));
+    CREATE TABLE IF NOT EXISTS telegram_test_owners(request_id TEXT PRIMARY KEY REFERENCES design_requests(id) ON DELETE CASCADE, chat_key TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS telegram_test_owners_chat ON telegram_test_owners(chat_key);
     CREATE TABLE IF NOT EXISTS request_sequence(id INTEGER PRIMARY KEY CHECK(id=1), last_number INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS design_briefs(project TEXT PRIMARY KEY REFERENCES projects(id), brief TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS clients(id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, password_hash TEXT NOT NULL, created INTEGER NOT NULL);
