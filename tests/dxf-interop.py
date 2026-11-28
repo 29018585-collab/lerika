@@ -20,7 +20,10 @@ for(const [type,p] of Object.entries(E.presets)){
 console.log(JSON.stringify(out));
 '''
 samples=json.loads(subprocess.check_output(["node","-e",source],text=True))
-assert len(samples)==48
+expected_types={"wardrobe","coupe","coupeMirror","hall","kitchen","wallcab","sideboard","tv","bookcase","desk","table","bed","nightstand","bath"}
+expected={(t,m) for t in expected_types for m in ("front","side","top","section")}
+assert len(samples)==len(expected)==56
+assert {(s["type"],s["mode"]) for s in samples}==expected
 for s in samples:
     doc=ezdxf.read(io.StringIO(s["dxf"],newline=None))
     label=s["type"]+"/"+s["mode"]
@@ -35,4 +38,4 @@ for s in samples:
         assert sum(e.dxftype()=="TEXT" and e.dxf.layer=="DIMENSIONS" for e in entities)==2,label
     else:
         assert not entities,label
-print("PASS: 48 DXF files opened by ezdxf, units mm, layers and audit clean")
+print("PASS: 56 DXF files opened by ezdxf, units mm, layers and audit clean")
