@@ -1,10 +1,13 @@
 """Synthetic tests only. Run: cd cabinet && python -m unittest test_telegram_files_qa"""
 import contextlib
+import hashlib
+import hmac
 import sqlite3
 import time
 import unittest
 from telegram_files import attachment_from_message, validate_bytes, receive_attachment, IntakeError, MAX_BYTES
 from telegram_intake import handle_test_order, pilot_keyboard
+from telegram_stage_notifications import preference,event_for_edit,deliver_event
 
 class TelegramFileQA(unittest.TestCase):
     def setUp(self):
@@ -20,6 +23,7 @@ class TelegramFileQA(unittest.TestCase):
         CREATE TABLE design_requests(id TEXT PRIMARY KEY,created INT);
         CREATE TABLE request_numbers(number INTEGER,request_id TEXT PRIMARY KEY);
         CREATE TABLE telegram_test_owners(request_id TEXT PRIMARY KEY REFERENCES design_requests(id) ON DELETE CASCADE,chat_key TEXT NOT NULL);
+        CREATE TABLE telegram_test_subscriptions(chat_key TEXT PRIMARY KEY);
         """)
         self.notices=[]
         self.key="k"*32
@@ -159,6 +163,35 @@ class TelegramFileQA(unittest.TestCase):
         row=self.conn.execute("SELECT brief FROM telegram_test_drafts").fetchone()
         self.assertEqual(row["brief"],"")
         self.assertIn("Описание сохранено",self.order("Тестовое описание"))
+    def test_stage_notification_opt_in_and_dedup(self):
+        cid="123456"
+        self.digest=hmac.new(self.key.encode(),cid.encode(),hashlib.sha256).hexdigest()[:32]
+        self.order("/order_test synthetic cabinet")
+        self.order("/confirm "+self.code())
+        rid=self.conn.execute("SELECT id FROM design_requests").fetchone()["id"]
+        old={"stage":1,"status":"work"}
+        self.assertIn("🔔 Включить уведомления",self.buttons())
+        self.assertIsNone(event_for_edit(self.conn,rid,old,3,"work"))
+        preference("/notify_on",self.digest,self.db,self.lock)
+        preference("/notify_on",self.digest,self.db,self.lock)
+        self.assertEqual(self.count("telegram_test_subscriptions"),1)
+        self.assertIn("🔕 Выключить уведомления",self.buttons())
+        self.assertIsNone(event_for_edit(self.conn,rid,old,1,"work"))
+        event=event_for_edit(self.conn,rid,old,3,"work")
+        sent=[]
+        def sender(token,method,payload):
+            sent.append(payload)
+            return {"message_id":1}
+        self.assertFalse(deliver_event(event,self.key,"123457","synthetic",sender))
+        self.assertEqual(sent,[])
+        self.assertTrue(deliver_event(event,self.key,cid,"synthetic",sender))
+        self.assertEqual(sent[0]["chat_id"],int(cid))
+        self.assertIn("3D-проект",sent[0]["text"])
+        self.assertNotIn("synthetic cabinet",sent[0]["text"])
+        self.assertIsNone(event_for_edit(self.conn,rid,{"stage":3,"status":"work"},3,"work"))
+        self.assertFalse(deliver_event(event,self.key,cid,"synthetic",lambda *a:None))
+        preference("/notify_off",self.digest,self.db,self.lock)
+        self.assertIsNone(event_for_edit(self.conn,rid,old,4,"work"))
     def test_photo_and_path(self):
         spec=attachment_from_message({"photo":[{"file_size":3,"file_id":"small"},{"file_size":5,"file_id":"big","file_unique_id":"x"}]})
         self.assertEqual(spec[1:],("big",5))
