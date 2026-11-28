@@ -922,30 +922,34 @@ const E=window.LerikaFurniture;
 const appliances={fridge:["Холодильник",600,1850,650,1],oven:["Духовка",595,595,570,1],hob:["Варочная панель",600,60,520,1],hood:["Вытяжка",600,300,450,1],dishwasher:["Посудомоечная машина",600,850,600,1],washer:["Стиральная машина",600,850,600,1],television:["Телевизор",1100,650,70,1]};
 const interior={
 sofa:["Прямой диван",2200,850,900,1],cornerLeft:["Угловой диван левый",2600,850,1700,1],cornerRight:["Угловой диван правый",2600,850,1700,1],sofaU:["П-образный диван",3200,850,1700,1],armchair:["Кресло",900,850,850,1],ottoman:["Пуф",500,450,500,1],bench:["Банкетка",1000,450,450,1],
-bathTub:["Ванна",1700,580,750,1],cornerBath:["Угловая ванна",1400,580,1400,1],sink:["Раковина",600,850,480,1],toilet:["Унитаз",390,780,650,1],bidet:["Биде",380,420,600,1],shower:["Душевая кабина",900,2100,900,1],showerScreen:["Душевая перегородка",900,2000,40,1],towelRail:["Полотенцесушитель",500,800,100,1],
+bathTub:["Ванна",1700,580,750,1],cornerBath:["Угловая ванна",1400,580,1400,1],sink:["Раковина",600,850,480,1],toilet:["Унитаз",390,780,650,1],bidet:["Биде",380,420,600,1],shower:["Душевая кабина",900,2100,900,1],cornerShower:["Угловая душевая кабина",900,2100,900,1],counterSink:["Накладная раковина",500,180,400,1],showerScreen:["Душевая перегородка",900,2000,40,1],towelRail:["Полотенцесушитель",500,800,100,1],
 chair:["Стул",480,850,500,1],barChair:["Барный стул",450,1050,450,1],roundTable:["Круглый стол",1100,750,1100,1],coffeeTable:["Журнальный столик",900,450,550,1],barCounter:["Барная стойка",1400,1050,550,1],island:["Кухонный остров (эскиз)",1500,900,800,1],
 floorLamp:["Торшер",350,1600,350,1],pendant:["Подвесной светильник",450,450,450,1],sconce:["Бра",250,250,160,1],tableLamp:["Настольная лампа",250,450,250,1],
 rug:["Ковёр",1800,10,1200,1],plant:["Растение",450,1300,450,1],mirror:["Зеркало",600,1000,30,1],insetMirror:["Встроенное зеркало",600,1800,20,1],picture:["Картина",700,500,30,1],curtain:["Шторы",1600,2400,100,1],radiator:["Радиатор",800,600,120,1],ac:["Кондиционер",850,280,230,1],
 partition:["Перегородка",1800,2700,100,1],partitionDoor:["Перегородка с проёмом",2000,2700,120,1],niche:["Ниша (три стенки)",1200,2400,600,1],column:["Колонна",350,2700,350,1],slats:["Реечная перегородка",1200,2400,100,1],podium:["Подиум",1500,150,1000,1]};
 const presets={...E.presets,...appliances,...interior},isInterior=type=>Object.hasOwn(interior,type),isAppliance=type=>Object.hasOwn(appliances,type)||isInterior(type);
-const category=type=>["sofa","cornerLeft","cornerRight","sofaU","armchair","ottoman","bench"].includes(type)?"Мягкая мебель":["bathTub","cornerBath","sink","toilet","bidet","shower","showerScreen","towelRail"].includes(type)?"Сантехника":["chair","barChair","roundTable","coffeeTable","barCounter","island"].includes(type)?"Столы и стулья":["floorLamp","pendant","sconce","tableLamp"].includes(type)?"Освещение":["rug","plant","mirror","insetMirror","picture","curtain","radiator","ac"].includes(type)?"Декор и оборудование":["partition","partitionDoor","niche","column","slats","podium"].includes(type)?"Перегородки и ниши":isAppliance(type)?"Техника":"Мебель";
+const category=type=>["sofa","cornerLeft","cornerRight","sofaU","armchair","ottoman","bench"].includes(type)?"Мягкая мебель":["bathTub","cornerBath","sink","toilet","bidet","shower","cornerShower","counterSink","showerScreen","towelRail"].includes(type)?"Сантехника":["chair","barChair","roundTable","coffeeTable","barCounter","island"].includes(type)?"Столы и стулья":["floorLamp","pendant","sconce","tableLamp"].includes(type)?"Освещение":["rug","plant","mirror","insetMirror","picture","curtain","radiator","ac"].includes(type)?"Декор и оборудование":["partition","partitionDoor","niche","column","slats","podium"].includes(type)?"Перегородки и ниши":isAppliance(type)?"Техника":"Мебель";
 
 const builtins={builtOven:["Модуль с духовкой","kitchen","oven",600,900,600],builtHob:["Модуль с варочной панелью","kitchen","hob",600,900,600],builtDishwasher:["Ниша под посудомойку","kitchen","dishwasher",600,900,600],builtFridge:["Шкаф с холодильником","wardrobe","fridge",600,2100,650]};
 const catalog={...presets,...builtins},name=a=>Object.values(builtins).find(v=>v[2]===a.builtin)?.[0]||presets[a.type]?.[0];
 
 const productDimensions={
  sofa:["Длина дивана","Высота спинки","Общая глубина"],cornerLeft:["Длина дивана","Высота спинки","Глубина с оттоманкой"],cornerRight:["Длина дивана","Высота спинки","Глубина с оттоманкой"],sofaU:["Длина дивана","Высота спинки","Глубина с боковыми секциями"],armchair:["Ширина кресла","Высота спинки","Глубина кресла"],ottoman:["Ширина пуфа","Высота сиденья","Глубина пуфа"],bench:["Длина банкетки","Высота сиденья","Глубина банкетки"],
- bathTub:["Длина ванны","Высота борта","Ширина ванны"],cornerBath:["Длина угловой ванны","Высота борта","Ширина угловой ванны"],sink:["Ширина раковины","Высота установки чаши","Выступ от стены"],toilet:["Ширина унитаза","Высота с бачком","Длина от стены"],bidet:["Ширина биде","Высота чаши","Длина от стены"],shower:["Ширина кабины","Высота кабины","Глубина кабины"],showerScreen:["Ширина перегородки","Высота стекла","Толщина условного контура"],towelRail:["Ширина полотенцесушителя","Высота полотенцесушителя","Выступ от стены"],
+ bathTub:["Длина ванны","Высота борта","Ширина ванны"],cornerBath:["Длина угловой ванны","Высота борта","Ширина угловой ванны"],sink:["Ширина раковины","Высота установки чаши","Выступ от стены"],toilet:["Ширина унитаза","Высота с бачком","Длина от стены"],bidet:["Ширина биде","Высота чаши","Длина от стены"],shower:["Ширина кабины","Высота кабины","Глубина кабины"],cornerShower:["Размер вдоль первой стены","Высота кабины","Размер вдоль второй стены"],counterSink:["Ширина чаши","Высота чаши","Глубина чаши"],showerScreen:["Ширина перегородки","Высота стекла","Толщина условного контура"],towelRail:["Ширина полотенцесушителя","Высота полотенцесушителя","Выступ от стены"],
  chair:["Ширина стула","Высота со спинкой","Глубина стула"],barChair:["Ширина барного стула","Высота со спинкой","Глубина стула"],roundTable:["Диаметр столешницы","Высота стола","Глубина столешницы"],coffeeTable:["Длина столешницы","Высота столика","Ширина столешницы"],barCounter:["Длина стойки","Высота стойки","Ширина столешницы"],island:["Длина острова","Высота острова","Ширина острова"],
- floorLamp:["Ширина абажура","Высота торшера","Глубина основания"],pendant:["Ширина светильника","Высота подвеса","Глубина светильника"],sconce:["Ширина бра","Высота бра","Выступ от стены"],tableLamp:["Ширина абажура","Высота лампы","Глубина основания"],rug:["Длина ковра","Толщина ковра","Ширина ковра"],plant:["Ширина растения","Высота растения","Глубина растения"],
+ floorLamp:["Диаметр абажура","Высота торшера","Диаметр основания"],pendant:["Ширина светильника","Высота подвеса","Глубина светильника"],sconce:["Ширина бра","Высота бра","Выступ от стены"],tableLamp:["Диаметр абажура","Высота лампы","Диаметр основания"],rug:["Длина ковра","Толщина ковра","Ширина ковра"],plant:["Ширина растения","Высота растения","Глубина растения"],
  mirror:["Ширина зеркала","Высота зеркала","Толщина условной модели"],insetMirror:["Ширина зеркала","Высота зеркала","Толщина условной модели"],picture:["Ширина картины","Высота картины","Толщина рамы"],curtain:["Ширина шторы","Длина шторы","Глубина складок"],radiator:["Длина радиатора","Высота радиатора","Выступ от стены"],ac:["Ширина блока","Высота блока","Выступ от стены"],
  partition:["Длина перегородки","Высота перегородки","Толщина перегородки"],partitionDoor:["Длина перегородки","Высота перегородки","Толщина перегородки"],niche:["Ширина ниши","Высота ниши","Глубина ниши"],column:["Ширина колонны","Высота колонны","Глубина колонны"],slats:["Ширина реечной панели","Высота реек","Толщина панели"],podium:["Длина подиума","Высота подиума","Ширина подиума"],
  fridge:["Ширина холодильника","Высота холодильника","Глубина холодильника"],oven:["Ширина духовки","Высота духовки","Глубина духовки"],hob:["Ширина варочной панели","Толщина панели","Глубина панели"],hood:["Ширина вытяжки","Высота вытяжки","Выступ от стены"],dishwasher:["Ширина посудомойки","Высота посудомойки","Глубина посудомойки"],washer:["Ширина стиральной машины","Высота стиральной машины","Глубина стиральной машины"],television:["Ширина экрана","Высота экрана","Толщина корпуса"]
 };
 const hiddenDimensions={rug:["h"],mirror:["d"],insetMirror:["d"],picture:["d"],television:["d"],showerScreen:["d"]};
-const elevatedTypes=new Set(["wallcab","hood","television","hob","mirror","insetMirror","picture","ac","pendant","sconce","towelRail","radiator"]);
+const elevatedTypes=new Set(["wallcab","hood","television","mirror","insetMirror","picture","ac","sconce","towelRail","radiator"]);
+const surfaceRequired=new Set(["tableLamp","hob","counterSink"]);
+const wallMounted=new Set(["wallcab","hood","television","mirror","insetMirror","picture","ac","sconce","towelRail","radiator","curtain"]);
+const placementKind=a=>surfaceRequired.has(a.type)||a.type==="television"&&a.supportId?"surface":a.type==="pendant"?"ceiling":a.type==="cornerShower"?"corner":wallMounted.has(a.type)?"wall":"floor";
+const supportTypes={tableLamp:["table","desk","nightstand","sideboard","tv","coffeeTable","roundTable","barCounter","island"],hob:["kitchen","island","barCounter"],counterSink:["bath","kitchen","island"],television:["tv","sideboard"]};
 function schema(type){if(!isAppliance(type))return E.schema(type);const labels=productDimensions[type]||["Ширина","Высота","Глубина"],ranges=isInterior(type)?[[100,6000],[5,4000],[20,6000]]:[[200,2000],[30,2300],[30,1000]];return {w:[labels[0],...ranges[0]],h:[labels[1],...ranges[1]],d:[labels[2],...ranges[2]],hiddenDimensions:hiddenDimensions[type]||[],sections:false,fronts:false,thickness:"",thicknessOptions:[16],note:isInterior(type)?"Объект интерьера, без производственной деталировки.":"Условная модель техники; размеры уточняются по паспорту производителя."}}
-function editorSchema(a){const q=schema(a.type),round=a.type==="roundTable"&&a.w===a.d,fr=a.builtin==="fridge",dish=a.builtin==="dishwasher";return {...q,...(a.builtin?{sections:false,w:["Ширина модуля",600,dish?620:700],h:["Высота модуля",fr?2000:850,fr?2400:1000],d:["Глубина модуля",fr?600:dish?560:570,750]}:{}),...(a.type==="roundTable"&&!round?{w:["Ширина овальной столешницы",...q.w.slice(1)],d:["Длина овальной столешницы",...q.d.slice(1)]}:{}),hiddenDimensions:[...(q.hiddenDimensions||[]),...(round?["d"]:[])],linkedDiameter:round,elevation:elevatedTypes.has(a.type)||a.elev!==0,shelfSlots:E.shelfSlots(a),shelfValues:E.optionsFor(a).shelves};}
+function editorSchema(a){const q=schema(a.type),round=a.type==="roundTable"&&a.w===a.d,fr=a.builtin==="fridge",dish=a.builtin==="dishwasher";return {...q,...(a.builtin?{sections:false,w:["Ширина модуля",600,dish?620:700],h:["Высота модуля",fr?2000:850,fr?2400:1000],d:["Глубина модуля",fr?600:dish?560:570,750]}:{}),...(a.type==="roundTable"&&!round?{w:["Ширина овальной столешницы",...q.w.slice(1)],d:["Длина овальной столешницы",...q.d.slice(1)]}:{}),hiddenDimensions:[...(q.hiddenDimensions||[]),...(round?["d"]:[]),...(["tableLamp","floorLamp"].includes(a.type)?["d"]:[])],lampBase:["tableLamp","floorLamp"].includes(a.type),placement:placementKind(a),linkedDiameter:round,elevation:placementKind(a)==="wall"&&(elevatedTypes.has(a.type)||a.elev!==0),shelfSlots:E.shelfSlots(a),shelfValues:E.optionsFor(a).shelves};}
 function interiorBoxes(a){
 const {w,h,d,type}=a,boxes=[],body=a.body,face=a.face,metal="#8c9398",white="#e9e9e4",dark="#49423b";
 const B=(x,y,z,aw,ah,ad,color=body)=>{if(aw>0&&ah>0&&ad>0)boxes.push({x,y,z,a:aw,b:ah,c:ad,color})};
@@ -960,11 +964,14 @@ if(["sofa","cornerLeft","cornerRight","sofaU","armchair"].includes(type)){
 else if(type==="bathTub"||type==="cornerBath"){const k=Math.min(w,d)*.08;B(0,0,0,w,h*.12,d,white);B(0,0,0,w,h,k,white);B(0,0,d-k,w,h,k,white);B(0,0,k,k,h,d-2*k,white);B(w-k,0,k,k,h,d-2*k,white);B(k,h*.13,k,w-2*k,h*.13,d-2*k,"#c4d6db");B(w*.45,h,0,w*.1,Math.min(100,h*.2),k,metal)}
 else if(type==="sink"){B(w*.4,0,d*.3,w*.2,h*.85,d*.4,white);B(0,h*.8,0,w,h*.08,d,white);for(const [x,z,aw,ad] of [[0,0,w,d*.14],[0,d*.86,w,d*.14],[0,d*.14,w*.13,d*.72],[w*.87,d*.14,w*.13,d*.72]])B(x,h*.88,z,aw,h*.12,ad,white);B(w*.46,h,0,w*.08,h*.12,d*.1,metal)}
 else if(type==="toilet"||type==="bidet"){B(w*.2,0,d*.2,w*.6,h*.35,d*.55,white);B(0,h*.3,d*.2,w,h*.14,d*.8,white);B(w*.14,h*.44,d*.3,w*.72,h*.025,d*.6,"#aab9bd");if(type==="toilet")B(0,h*.4,0,w,h*.6,d*.24,white)}
+else if(type==="counterSink"){const k=Math.min(w,d)*.10;B(0,0,0,w,h*.12,d,white);B(0,h*.12,0,w,h*.88,k,white);B(0,h*.12,d-k,w,h*.88,k,white);B(0,h*.12,k,k,h*.88,d-2*k,white);B(w-k,h*.12,k,k,h*.88,d-2*k,white)}
+else if(type==="cornerShower"){const k=18,base=Math.min(100,h*.05);B(0,0,0,w,base,d,white);B(w-k,base,0,k,h-base,d,"#b7d4da");B(0,base,d-k,w-k,h-base,k,"#b7d4da");B(w-2*k,base,d-2*k,2*k,h-base,2*k,metal);B(w-k,h-k,0,k,k,d,metal);B(0,h-k,d-k,w,k,k,metal);B(w*.55,h*.47,d-3*k,24,Math.min(300,h*.2),k,metal)}
 else if(type==="shower"){B(0,0,0,w,h*.05,d,white);const k=Math.min(35,w*.1,d*.1);B(0,0,0,w,h,k,"#b7d4da");B(0,0,0,k,h,d,"#b7d4da");B(w-k,0,0,k,h,d,"#b7d4da");B(0,h-k,0,w,k,d,metal);B(w-k,0,d-k,k,h,k,metal)}
 else if(type==="chair"||type==="barChair"){const seat=h*(type==="barChair"?.66:.52);legs(0,0,w,d,seat);B(0,seat,0,w,h*.07,d,face);B(0,seat,0,w,h-seat,t,body)}
 else if(type==="roundTable"){const thick=Math.min(45,h*.1);for(let i=0;i<28;i++){const z=i*d/28,xx=w/2*Math.sqrt(Math.max(0,1-(2*(z+d/56)/d-1)**2));B(w/2-xx,h-thick,z,2*xx,thick,d/28,face)}B(w*.4,0,d*.4,w*.2,h-thick,d*.2,body);B(w*.2,0,d*.2,w*.6,Math.min(40,h*.1),d*.6,body)}
 else if(["coffeeTable","barCounter","island"].includes(type)){const k=Math.min(40,h*.1);if(type==="island")B(0,0,0,w,h-k,d,body);else legs(0,0,w,d,h-k);B(0,h-k,0,w,k,d,face)}
-else if(["floorLamp","tableLamp","pendant","sconce"].includes(type)){const k=Math.min(w,d)*.12;if(type==="pendant"){B(w/2-k/2,h*.45,d/2-k/2,k,h*.55,k,metal);B(0,0,0,w,h*.45,d,face)}else{B(0,0,0,w,h*.05,d,metal);B(w/2-k/2,0,d/2-k/2,k,h*.7,k,metal);B(0,h*.7,0,w,h*.3,d,face)}}
+else if(["floorLamp","tableLamp"].includes(type)){const dia=w,base=a.baseDiameter??Math.round(w*.65),size=Math.max(dia,base),k=Math.max(8,Math.min(dia,base)*.12),cx=size/2;B(cx-base/2,0,cx-base/2,base,h*.05,base,metal);B(cx-k/2,0,cx-k/2,k,h*.70,k,metal);B(cx-dia/2,h*.7,cx-dia/2,dia,h*.3,dia,face)}
+else if(["pendant","sconce"].includes(type)){const k=Math.min(w,d)*.12;if(type==="pendant"){B(w/2-k/2,h*.45,d/2-k/2,k,h*.55,k,metal);B(0,0,0,w,h*.45,d,face)}else{B(0,0,0,w,h*.05,d,metal);B(w/2-k/2,0,d/2-k/2,k,h*.7,k,metal);B(0,h*.7,0,w,h*.3,d,face)}}
 else if(type==="plant"){B(w*.16,0,d*.16,w*.68,h*.25,d*.68,body);B(w*.46,h*.22,d*.46,w*.08,h*.65,d*.08,"#716347");for(let i=0;i<5;i++){const p=(i%2)*.24;B(w*.12+p*w,h*(.42+i*.105),d*.1,w*.62,h*.16,d*.8,i%2?"#688053":"#465b36")}}
 else if(type==="radiator"||type==="towelRail"){for(let i=0;i<8;i++)B(i*w/8,0,0,w/10,h,d,white);B(0,h*.1,0,w,h*.08,d,metal)}
 else if(type==="partitionDoor"){const width=Math.min(900,w-200),height=Math.min(2100,h-100),side=(w-width)/2;B(0,0,0,side,h,d,body);B(w-side,0,0,side,h,d,body);B(side,height,0,width,h-height,d,body)}else if(type==="niche"){const k=Math.min(100,w*.2,d*.2);B(0,0,0,w,h,k,body);B(0,0,k,k,h,d-k,body);B(w-k,0,k,k,h,d-k,body)}
@@ -1045,7 +1052,9 @@ function detailBoxes(a,base){
   const k=Math.min(45,w*.12,sd*.12);for(const x of [k,w-2*k])for(const z of [k,sd-2*k])B(x,0,z,k,h*.08,k,black);
  }else if(["coffeeTable","barCounter","island"].includes(type)){
   const k=Math.min(40,h*.1);if(type==="island"){B(0,0,0,w,h-k,d,body,"wood");for(let i=0;i<Math.max(2,Math.round(w/600));i++){const n=Math.max(2,Math.round(w/600)),sw=w/n;B(i*sw+3,h*.10,d-7,sw-6,h*.78,7,face,"wood");B(i*sw+sw*.40,h*.72,d-3,sw*.20,12,3,chrome,"metal")}}else legs(h-k,.07);B(0,h-k,0,w,k,d,face,"wood");
- }else if(["floorLamp","tableLamp","pendant","sconce"].includes(type)){
+ }else if(["floorLamp","tableLamp"].includes(type)){
+  const dia=w,base=a.baseDiameter??Math.round(w*.65),size=Math.max(dia,base),cx=size/2,r=Math.max(4,Math.min(dia,base)*.055);oval(cx,cx,base/2,base/2,0,h*.05,chrome,"metal");oval(cx,cx,r,r,h*.05,h*.67,chrome,"metal");oval(cx,cx,dia/2,dia/2,h*.70,h*.10,face,"fabric");oval(cx,cx,dia*.40,dia*.40,h*.80,h*.10,face,"fabric");oval(cx,cx,dia*.30,dia*.30,h*.90,h*.10,face,"fabric");
+ }else if(["pendant","sconce"].includes(type)){
   const r=Math.min(w,d)*.055;if(type==="pendant"){oval(w/2,d/2,r,r,h*.45,h*.55,chrome,"metal");oval(w/2,d/2,w*.49,d*.49,0,h*.12,shade(face,.9));oval(w/2,d/2,w*.43,d*.43,h*.12,h*.18,face,"fabric");oval(w/2,d/2,w*.30,d*.30,h*.30,h*.15,face,"fabric")}else{oval(w/2,d/2,w*.49,d*.49,0,h*.05,chrome,"metal");oval(w/2,d/2,r,r,h*.05,h*.67,chrome,"metal");oval(w/2,d/2,w*.49,d*.49,h*.70,h*.10,face,"fabric");oval(w/2,d/2,w*.40,d*.40,h*.80,h*.10,face,"fabric");oval(w/2,d/2,w*.30,d*.30,h*.90,h*.10,face,"fabric")}
  }else if(type==="radiator"||type==="towelRail"){
   if(type==="radiator"){for(let i=0;i<10;i++){const x=i*w/10;B(x,0,0,w*.075,h,d,white);B(x+w*.015,h*.06,d*.88,w*.045,h*.88,d*.12,shade(white,.94))}B(0,h*.10,0,w,h*.07,d,chrome,"metal")}
@@ -1080,20 +1089,95 @@ function bedVisual(item,base){
  }
  return out;
 }
-function model(item,opened=false,detailed=false){if(!item||(isAppliance(item.type)&&item.builtin)||!Object.hasOwn(presets,item.type)||!integer(item.rot,0,3)||!integer(item.x,-24000,24000)||!integer(item.z,-24000,24000)||!integer(item.elev,0,4000)||![item.body,item.face,item.top].every(v=>typeof v==="string"&&/^#[a-f0-9]{6}$/i.test(v)))return null;const p=schema(item.type);if(item.type==="partitionDoor"&&(item.w<500||item.h<600))return null;if(!["w","h","d"].every(k=>integer(item[k],p[k][1],p[k][2]))||(!p.sections&&item.n!==presets[item.type][4])||(item.type!=="wallcab"&&!isAppliance(item.type)&&item.elev!==0))return null;
+function model(item,opened=false,detailed=false){if(!item||(isAppliance(item.type)&&item.builtin)||!Object.hasOwn(presets,item.type)||!integer(item.rot,0,3)||!integer(item.x,-24000,24000)||!integer(item.z,-24000,24000)||!integer(item.elev,0,4000)||![item.body,item.face,item.top].every(v=>typeof v==="string"&&/^#[a-f0-9]{6}$/i.test(v)))return null;const p=schema(item.type);if(["tableLamp","floorLamp"].includes(item.type)&&item.baseDiameter!==undefined&&!integer(item.baseDiameter,60,1500))return null;if(item.type==="partitionDoor"&&(item.w<500||item.h<600))return null;if(!["w","h","d"].every(k=>integer(item[k],p[k][1],p[k][2]))||(!p.sections&&item.n!==presets[item.type][4])||(item.type!=="wallcab"&&!isAppliance(item.type)&&item.elev!==0))return null;
 const m=isAppliance(item.type)?applianceBoxes(item):E.build(item,{body:item.body,face:item.face,top:item.top,doors:"closed",drawers:"closed",handle:item.handle||"brass",config:item.config});
 if(!m||!m.boxes.length)return null;
 const turn=(x,z)=>[[x,z],[-z,x],[-x,-z],[z,-x]][item.rot];
 const rotated=m.boxes.map(b=>{const ps=[[b.x,b.z],[b.x+b.a,b.z],[b.x,b.z+b.c],[b.x+b.a,b.z+b.c]].map(p=>turn(...p)),xs=ps.map(p=>p[0]),zs=ps.map(p=>p[1]);return {x:Math.min(...xs),z:Math.min(...zs),y:b.y,a:Math.max(...xs)-Math.min(...xs),c:Math.max(...zs)-Math.min(...zs),b:b.b,color:b.color,textureRotation:item.rot}});
 const minX=Math.min(...rotated.map(b=>b.x)),minZ=Math.min(...rotated.map(b=>b.z)),maxX=Math.max(...rotated.map(b=>b.x+b.a)),maxZ=Math.max(...rotated.map(b=>b.z+b.c)),minY=Math.min(...rotated.map(b=>b.y)),maxY=Math.max(...rotated.map(b=>b.y+b.b));
 const visual=opened&&!isAppliance(item.type)?E.build(item,{body:item.body,face:item.face,top:item.top,doors:"all",drawers:"all",extension:.7,handle:item.handle||"brass",config:item.config}):null;
-const rawDetail=detailed?(item.type==="bed"?bedVisual(item,m.boxes):item.type==="showerScreen"?m.boxes.map(b=>({...b,visualSurface:"glass"})):isAppliance(item.type)?detailBoxes(item,m.boxes):null):null;
+const rawDetail=detailed?(item.type==="bed"?bedVisual(item,m.boxes):item.type==="showerScreen"?m.boxes.map(b=>({...b,visualSurface:"glass"})):item.type==="cornerShower"?m.boxes.map(b=>b.color==="#b7d4da"?{...b,visualSurface:"glass"}:b):isAppliance(item.type)?detailBoxes(item,m.boxes):null):null;
 const display=(visual||rawDetail)?(visual?visual.boxes:rawDetail).map(b=>{const ps=[[b.x,b.z],[b.x+b.a,b.z],[b.x,b.z+b.c],[b.x+b.a,b.z+b.c]].map(p=>turn(...p)),xs=ps.map(p=>p[0]),zs=ps.map(p=>p[1]),hinge=b.hinge?turn(...b.hinge):null;return {x:Math.min(...xs),z:Math.min(...zs),y:b.y,a:Math.max(...xs)-Math.min(...xs),c:Math.max(...zs)-Math.min(...zs),b:b.b,color:b.color,texture:b.texture,visualSurface:b.visualSurface,smooth:b.smooth,textureRotation:item.rot,hinge,angle:b.angle}}):rotated;
 // Decorative replacements are clipped to the original closed spatial envelope.
 const visible=rawDetail?display.map(b=>{const x=Math.max(b.x,minX),z=Math.max(b.z,minZ),y=Math.max(b.y,minY);return {...b,x,z,y,a:Math.min(b.x+b.a,maxX)-x,c:Math.min(b.z+b.c,maxZ)-z,b:Math.min(b.y+b.b,maxY)-y}}).filter(b=>b.a>0&&b.b>0&&b.c>0):display;
 return {item,boxes:visible.map(b=>({...b,x:b.x-minX+item.x,z:b.z-minZ+item.z,y:b.y+item.elev,hinge:b.hinge?[b.hinge[0]-minX+item.x,b.hinge[1]-minZ+item.z]:null})),x:item.x,z:item.z,w:maxX-minX,d:maxZ-minZ,lo:minY+item.elev,hi:maxY+item.elev,parts:m.parts,areas:m.areas,canOpen:!!(m.controls?.doors.length||m.controls?.drawers.length)};
 }
-function item(type,id,x=0,z=0){if(Object.hasOwn(builtins,type)){const [,base,builtin,w,h,d]=builtins[type];return {...item(base,id,x,z),builtin,w,h,d,n:1}}const p=presets[type];if(!p)return null;return {id,type,w:p[1],h:p[2],d:p[3],n:p[4],t:16,ft:16,elev:({wallcab:1450,hood:1450,television:900,hob:900,mirror:900,insetMirror:300,picture:1300,ac:2100,pendant:2000,sconce:1500,towelRail:850,radiator:100})[type]||0,rot:0,x,z,body:isAppliance(type)?"#777e84":"#b18b5f",face:isAppliance(type)?"#c5c9cc":"#cfc0aa",top:isAppliance(type)?"#777e84":"#b18b5f"}}
+function item(type,id,x=0,z=0){if(Object.hasOwn(builtins,type)){const [,base,builtin,w,h,d]=builtins[type];return {...item(base,id,x,z),builtin,w,h,d,n:1}}const p=presets[type];if(!p)return null;return {id,type,w:p[1],h:p[2],d:p[3],n:p[4],t:16,ft:16,elev:({wallcab:1450,hood:1450,television:900,hob:900,mirror:900,insetMirror:300,picture:1300,ac:2100,pendant:2000,sconce:1500,towelRail:850,radiator:100})[type]||0,rot:0,x,z,...(["floorLamp","tableLamp"].includes(type)?{baseDiameter:Math.round(p[1]*.65)}:{}),body:isAppliance(type)?"#777e84":"#b18b5f",face:isAppliance(type)?"#c5c9cc":"#cfc0aa",top:isAppliance(type)?"#777e84":"#b18b5f"}}
+// Support surfaces are derived from actual closed geometry, not nominal cabinet height.
+function topSurface(parent){
+ const m=model(parent);if(!m)return null;
+ if(parent.type==="roundTable")return {x:m.x,z:m.z,w:m.w,d:m.d,y:Math.round(m.hi),ellipse:true};
+ const top=m.boxes.filter(b=>Math.abs(b.y+b.b-m.hi)<eps).sort((a,b)=>b.a*b.c-a.a*a.c)[0];
+ return top?{x:top.x,z:top.z,w:top.a,d:top.c,y:Math.round(top.y+top.b)}:null;
+}
+function eligibleSupports(a,items){
+ return items.filter(p=>p.id!==a.id&&!p.supportId&&(supportTypes[a.type]||[]).includes(p.type)&&topSurface(p));
+}
+const quarter=(x,z,rot)=>[[x,z],[-z,x],[-x,-z],[z,-x]][(rot+4)%4];
+function onSurface(a,p){
+ const top=topSurface(p);if(!top||!Number.isSafeInteger(a.supportU)||!Number.isSafeInteger(a.supportV)||!integer(a.supportRot,0,3))return null;
+ const rot=(p.rot+a.supportRot)%4,trial={...a,rot,elev:top.y},m=model(trial);if(!m)return null;
+ const [dx,dz]=quarter(a.supportU,a.supportV,p.rot);
+ const x=Math.round(top.x+top.w/2+dx-m.w/2),z=Math.round(top.z+top.d/2+dz-m.d/2),next={...trial,x,z};
+ if(x<top.x-eps||z<top.z-eps||x+m.w>top.x+top.w+eps||z+m.d>top.z+top.d+eps)return null;
+ if(top.ellipse&&[[x,z],[x+m.w,z],[x,z+m.d],[x+m.w,z+m.d]].some(([u,v])=>((u-top.x-top.w/2)/(top.w/2))**2+((v-top.z-top.d/2)/(top.d/2))**2>1+eps))return null;
+ return next;
+}
+function attachAt(a,p,x,z,rot=a.rot){
+ const top=topSurface(p),m=model({...a,rot});if(!top||!m)return null;
+ const [u,v]=quarter(x+m.w/2-top.x-top.w/2,z+m.d/2-top.z-top.d/2,4-p.rot);
+ return onSurface({...a,supportId:p.id,supportU:Math.round(u),supportV:Math.round(v),supportRot:(rot-p.rot+4)%4},p);
+}
+function surfacePosition(r,items,a,preferred){
+ for(const p of eligibleSupports(a,items).filter(p=>!preferred||p.id===preferred)){
+  const top=topSurface(p),m=model(a);if(!m)continue;
+  const offsets=[0,-.25,.25,-.4,.4];
+  for(const u of offsets)for(const v of offsets){
+   const next=attachAt(a,p,top.x+top.w*(.5+u)-m.w/2,top.z+top.d*(.5+v)-m.d/2);
+   if(next&&next.elev>0&&!inspect(r,[...items.filter(i=>i.id!==a.id),next],[]).bad.has(a.id))return next;
+  }
+ }
+ return null;
+}
+function anchored(r,a,kind=placementKind(a)){
+ if(kind==="surface")return a;
+ if(kind==="ceiling")return {...a,elev:r.h-a.h};
+ if(kind!=="corner"&&kind!=="wall")return a;
+ const rot=a.rot,m=model(a);if(!m||m.w>r.w+eps||m.d>r.d+eps)return null;
+ const x=Math.round(Math.max(0,Math.min(Math.floor(r.w-m.w+eps),a.x))),z=Math.round(Math.max(0,Math.min(Math.floor(r.d-m.d+eps),a.z)));
+ if(kind==="corner")return {...a,elev:0,x:rot===0||rot===3?0:Math.floor(r.w-m.w+eps),z:rot===0||rot===1?0:Math.floor(r.d-m.d+eps)};
+ return {...a,x:rot===1?Math.floor(r.w-m.w+eps):rot===3?0:x,z:rot===0?0:rot===2?Math.floor(r.d-m.d+eps):z};
+}
+function syncPlacement(r,list){
+ return list.map(a=>{
+  if(placementKind(a)==="surface"){
+   const p=eligibleSupports(a,list).find(v=>v.id===a.supportId);
+   return p?onSurface(a,p)||a:a;
+  }
+  return (a.mount===true||a.type==="pendant"||a.type==="cornerShower")?anchored(r,a)||a:a;
+ });
+}
+function placementError(r,a,list){
+ const k=placementKind(a);
+ if(k==="surface"){
+  const p=eligibleSupports(a,list).find(v=>v.id===a.supportId),expected=p&&onSurface(a,p);
+  if(!expected||expected.x!==a.x||expected.z!==a.z||expected.elev!==a.elev||expected.rot!==a.rot)return "Выберите подходящую поверхность; предмет должен полностью помещаться на ней.";
+ }else if(k==="ceiling"||k==="corner"||k==="wall"&&a.mount===true){
+  const v=anchored(r,a);if(!v||v.x!==a.x||v.z!==a.z||v.elev!==a.elev)return "Проверьте привязку к "+(k==="ceiling"?"потолку":k==="corner"?"углу":"стене")+".";
+ }
+ return "";
+}
+function changePlacement(r,items,openings,next){
+ const a=items.find(v=>v.id===next.id);if(!a)return null;
+ const k=placementKind(next);
+ if(k==="surface"){
+  const p=eligibleSupports(next,items).find(v=>v.id===next.supportId);
+  if(!p)return null;
+  next=attachAt(next,p,next.x,next.z,next.rot);if(!next)return null;
+ }else if(k==="ceiling"||k==="corner"||k==="wall"&&next.mount===true){next=anchored(r,next);if(!next)return null}
+ const list=syncPlacement(r,items.map(v=>v.id===next.id?next:v)),affected=new Set([next.id,...list.filter(v=>v.supportId===next.id).map(v=>v.id)]);
+ const check=inspect(r,list,openings);return [...affected].some(id=>check.bad.has(id))?null:list;
+}
 function intersect(a,b){return overlap(a.x,a.x+a.w,b.x,b.x+b.w)&&overlap(a.z,a.z+a.d,b.z,b.z+b.d)}
 function collision(a,b){if(a.item.type==="rug"||b.item.type==="rug")return false;if(!intersect(a,b)||!overlap(a.lo,a.hi,b.lo,b.hi))return false;
 if([a.item.type,b.item.type].some(t=>["niche","partitionDoor","cornerLeft","cornerRight","sofaU"].includes(t))){return a.boxes.some(x=>b.boxes.some(y=>overlap(x.x,x.x+x.a,y.x,y.x+y.a)&&overlap(x.z,x.z+x.c,y.z,y.z+y.c)&&overlap(x.y,x.y+x.b,y.y,y.y+y.b)))}
@@ -1102,7 +1186,7 @@ function inspect(r,items,openings){
 const models=items.map(a=>model(a)),bad=new Set(),messages=[],badOpenings=new Set(),add=(msg,...ids)=>{messages.push(msg);ids.forEach(id=>bad.add(id))};
 if(!roomOK(r))messages.push("Недопустимые размеры комнаты.");
 openings.forEach((o,i)=>{if(!openingOK(r,o)){messages.push("Проём "+(i+1)+" выходит за стену или потолок.");badOpenings.add(o.id);return}for(let j=0;j<i;j++){const v=openings[j];if(openingOK(r,v)&&v.wall===o.wall&&overlap(o.offset,o.offset+o.w,v.offset,v.offset+v.w)){messages.push("Проёмы "+(j+1)+" и "+(i+1)+" пересекаются.");badOpenings.add(o.id);badOpenings.add(v.id)}}});
-models.forEach((m,i)=>{const a=items[i],name="#"+a.id+" "+presets[a.type]?.[0];if(!m){add(name+": недопустимая конструкция.",a.id);return}if(!insideRoom(r,m)||m.lo<0||m.hi>r.h+eps)add(name+": выходит за границы комнаты.",a.id);
+models.forEach((m,i)=>{const a=items[i],name="#"+a.id+" "+presets[a.type]?.[0];if(!m){add(name+": недопустимая конструкция.",a.id);return}if(!insideRoom(r,m)||m.lo<0||m.hi>r.h+eps)add(name+": выходит за границы комнаты.",a.id);const placement=placementError(r,a,items);if(placement)add(name+": "+placement,a.id);
 for(let j=0;j<i;j++){const v=models[j];if(v&&collision(m,v))add("#"+v.item.id+" и #"+a.id+": габаритные объёмы пересекаются.",a.id,v.item.id)}
 openings.forEach((o,j)=>{if(badOpenings.has(o.id))return;const zone=openingRect(r,o,o.type==="door"?o.w:200),lo=o.sill,hi=o.sill+o.h;if(a.type!=="rug"&&intersect(m,zone)&&overlap(m.lo,m.hi,lo,hi))add(name+": "+(o.type==="door"?"зона открывания двери":"зона окна")+" №"+(j+1)+".",a.id)});
 });
@@ -1115,12 +1199,25 @@ function rotationCandidate(r,items,openings,a,rot){
  const x0=clamp(cx,r.w-m.w),z0=clamp(cz,r.d-m.d),xs=[x0,clamp(a.x,r.w-m.w)],zs=[z0,clamp(a.z,r.d-m.d)];
  for(const delta of [-100,-50,50,100]){xs.push(clamp(x0+delta,r.w-m.w));zs.push(clamp(z0+delta,r.d-m.d))}
  const candidates=[...new Set(xs)].flatMap(x=>[...new Set(zs)].map(z=>({...trial,x,z}))).sort((a,b)=>Math.hypot(a.x-cx,a.z-cz)-Math.hypot(b.x-cx,b.z-cz));
- for(const next of candidates){if(!inspect(r,items.map(v=>v.id===a.id?next:v),openings).bad.has(a.id))return next}return null;
+ for(const next of candidates){const list=changePlacement(r,items,openings,next);if(list)return list.find(v=>v.id===a.id)}return null;
 }
-function freePosition(r,items,openings,next){const m=model(next);if(!m||m.w>r.w||m.d>r.d||m.hi>r.h)return null;const old=inspect(r,items,openings).models;const candidates=[[100,100],[0,0],[r.w-m.w,0],[0,r.d-m.d],[r.w-m.w,r.d-m.d]];for(let z=50;z<=r.d-m.d;z+=100)for(let x=50;x<=r.w-m.w;x+=100)candidates.push([x,z]);for(const [x,z] of candidates){if(x<0||z<0||x+m.w>r.w+eps||z+m.d>r.d+eps)continue;const a={...m,x,z,boxes:m.boxes.map(b=>({...b,x:b.x-m.x+x,z:b.z-m.z+z}))};if(!insideRoom(r,a)||old.some(b=>collision(a,b)))continue;if(next.type!=="rug"&&openings.some(o=>openingOK(r,o)&&intersect(a,openingRect(r,o,o.type==="door"?o.w:200))&&overlap(a.lo,a.hi,o.sill,o.sill+o.h)))continue;return {...next,x:Math.round(x),z:Math.round(z)}}return null}
+function freePosition(r,items,openings,next){
+ if(placementKind(next)==="surface")return surfacePosition(r,items,next,next.supportId)||surfacePosition(r,items,next);
+ if(placementKind(next)==="wall"||placementKind(next)==="corner"){
+  const kind=placementKind(next);
+  for(const rot of [next.rot,(next.rot+1)%4,(next.rot+2)%4,(next.rot+3)%4]){
+   const m=model({...next,rot});if(!m)continue;
+   for(const pos of [0,100,500,1000,1500,2000,3000,4000,5000,6000,7000,8000,9000,10000]){
+    const a=anchored(r,{...next,rot,mount:true,x:pos,z:pos},kind);
+    if(a&&!inspect(r,[...items,a],openings).bad.has(a.id))return a;
+   }
+  }return null;
+ }
+ if(placementKind(next)==="ceiling")next=anchored(r,next);
+ const m=model(next);if(!m||m.w>r.w||m.d>r.d||m.hi>r.h)return null;const old=inspect(r,items,openings).models;const candidates=[[100,100],[0,0],[r.w-m.w,0],[0,r.d-m.d],[r.w-m.w,r.d-m.d]];for(let z=50;z<=r.d-m.d;z+=100)for(let x=50;x<=r.w-m.w;x+=100)candidates.push([x,z]);for(const [x,z] of candidates){if(x<0||z<0||x+m.w>r.w+eps||z+m.d>r.d+eps)continue;const a={...m,x,z,boxes:m.boxes.map(b=>({...b,x:b.x-m.x+x,z:b.z-m.z+z}))};if(!insideRoom(r,a)||old.some(b=>collision(a,b)))continue;if(next.type!=="rug"&&openings.some(o=>openingOK(r,o)&&intersect(a,openingRect(r,o,o.type==="door"?o.w:200))&&overlap(a.lo,a.hi,o.sill,o.sill+o.h)))continue;return {...next,x:Math.round(x),z:Math.round(z)}}return null}
 function demo(){return {r:{w:4800,d:3600,h:2700},items:[item("wardrobe",1,100,100),{...item("bed",2,2700,100),face:"#cfc0aa"},{...item("desk",3,100,2350),top:"#b18b5f"}],openings:[{id:1,type:"door",wall:"bottom",offset:3300,w:900,h:2100,sill:0,hinge:"start"},{id:2,type:"window",wall:"top",offset:2700,w:1500,h:1100,sill:1100,hinge:"start"}]}}
 function roomBoxes(r,openings,yaw,all=false){const out=[],th=r.wallThickness||80,colors=finish(r);const box=(x,y,z,a,b,c,color,texture)=>{if(a>eps&&b>eps&&c>eps)out.push({x,y,z,a,b,c,color,texture})};for(const f of floorRects(r))box(f.x,-40,f.z,f.w,40,f.d,colors.floor,r.floorStyle==="wood"?"planks":r.floorStyle==="tile"?"tile":"solid");const visible=all?walls:[Math.cos(yaw)>=0?"top":"bottom",Math.sin(yaw)>=0?"left":"right"];for(const wall of visible){const [start,len]=wallRange(r,wall),ops=openings.filter(o=>o.wall===wall&&openingOK(r,o)).sort((a,b)=>a.offset-b.offset);let at=start;const segment=(a,b,y,h,color=colors[wall])=>{const tex=color===colors[wall]?(r.wallStyles?.[wall]||"paint"):"solid";if(wall==="top")box(a,y,-th,b-a,h,th,color,tex);if(wall==="bottom")box(a,y,r.d,b-a,h,th,color,tex);if(wall==="left")box(-th,y,a,th,h,b-a,color,tex);if(wall==="right")box(r.w,y,a,th,h,b-a,color,tex)};for(const o of ops){if(o.offset<at)continue;segment(at,o.offset,0,r.h);segment(o.offset,o.offset+o.w,0,o.sill);segment(o.offset,o.offset+o.w,o.sill+o.h,r.h-o.sill-o.h);if(o.type==="window"){segment(o.offset,o.offset+o.w,o.sill,25,"#b6b7b0");segment(o.offset,o.offset+25,o.sill+25,o.h-25,"#b6b7b0");segment(o.offset+o.w-25,o.offset+o.w,o.sill+25,o.h-25,"#b6b7b0")}at=o.offset+o.w}segment(at,len,0,r.h);if(r.baseboard){const sk=(a,b)=>{if(wall==="top")box(a,0,0,b-a,70,12,colors.baseboard);if(wall==="bottom")box(a,0,r.d-12,b-a,70,12,colors.baseboard);if(wall==="left")box(0,0,a,12,70,b-a,colors.baseboard);if(wall==="right")box(r.w-12,0,a,12,70,b-a,colors.baseboard)};let p=start;for(const o of ops.filter(o=>o.type==="door")){sk(p,o.offset);p=o.offset+o.w}sk(p,len)}}const n=notchRect(r);if(n){const x=n.x===0?n.w-th:n.x,z=n.z===0?n.d-th:n.z;box(x,0,n.z,th,r.h,n.d,colors[n.x===0?"left":"right"]);box(n.x,0,z,n.w,r.h,th,colors[n.z===0?"top":"bottom"])}return out}
-return {presets,catalog,builtins,name,schema,isAppliance,isInterior,category,roomOK,finish,floorRects,notchRect,insideRoom,wallRange,openingOK,openingRect,model,item,inspect,freePosition,demo,roomBoxes,wallLen,intersect,editorSchema,rotationCandidate};
+return {presets,catalog,builtins,name,schema,isAppliance,isInterior,category,roomOK,finish,floorRects,notchRect,insideRoom,wallRange,openingOK,openingRect,model,item,inspect,freePosition,demo,roomBoxes,wallLen,intersect,editorSchema,rotationCandidate,placementKind,eligibleSupports,surfacePosition,syncPlacement,changePlacement,topSurface,placementError};
 })();
 </script><script>
 (()=>{
