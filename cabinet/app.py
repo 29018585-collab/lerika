@@ -353,7 +353,7 @@ def telegram_webhook():
         return classify(query,key,LERIKA_AI_MODEL)
     pilot=None
     if is_admin:
-        from telegram_intake import handle_test_order
+        from telegram_intake import handle_test_order,pilot_keyboard
         from telegram_files import receive_attachment
         try:
             pilot=receive_attachment(message,digest,os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip(),db,lock)
@@ -368,6 +368,13 @@ def telegram_webhook():
         answer,markup=pilot,None
     else:
         answer,markup=answer_message(text,PUBLIC_ORIGIN,is_admin,classify_preview if is_admin else None)
+    if is_admin and text != "🌐 Инструменты сайта" and (pilot is not None or not (isinstance(text,str) and text.startswith("/ai "))):
+        try:
+            markup=pilot_keyboard(digest,db,lock)
+            if pilot is None:
+                answer="ЛериКа · Тестовый режим администратора. Используйте кнопки для создания и отправки вымышленных заявок. Реальные клиентские данные пока не принимаются."
+        except Exception:
+            app.logger.warning("Telegram pilot keyboard unavailable")
     # Telegram can execute a Bot API method from the webhook response.
     # This avoids another outbound request and never exposes the bot token.
     result={"method":"sendMessage","chat_id":cid,"text":answer,"link_preview_options":{"is_disabled":True}}
