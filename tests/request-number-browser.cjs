@@ -7,10 +7,13 @@ const rows=[
  {id:"bcdefa1234567890bcdefa1234567890",request_number:"L-000124",request_source:"config",request_created:200,category:1,title:"Синтетическая заявка 124",description:"Тест",stage:1,status:"work",published:0,files:[]}
 ];
 const json=(res,data)=>{res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify(data))};
+const messages=[];
 const server=http.createServer((req,res)=>{
+ if(req.url==="/api/client/orders/qa-order/messages"&&req.method==="POST"){let raw="";req.on("data",c=>raw+=c);req.on("end",()=>{messages.push({author:"client",body:JSON.parse(raw).text,created:100});res.writeHead(201,{"Content-Type":"application/json"});res.end(JSON.stringify({messages}))});return}
  if(req.method!=="GET"){res.writeHead(405);res.end();return}
  const p=new URL(req.url,"http://127.0.0.1").pathname;
  if(p==="/showroom/"){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(req.url.includes("qa-client")?html.toString("utf8").replace(/(<meta name="lerika-app-origin" content=")[^"]+(")/,(_,a,b)=>a+"http://127.0.0.1:"+server.address().port+b):html);return}
+ if(p==="/api/client/orders/qa-order/messages"){json(res,{messages});return}
  if(p==="/api/client/session"){json(res,{name:"QA Client",email:"qa@example.invalid",orders:[{id:"qa-order",number:"L-000123",title:"Тест кухни",stage:clientStage,status:"work",created:100,files:clientShared?[{id:"qa-pdf",name:filename,stage:2}]:[]}]});return}
  if(p==="/api/client/files/qa-pdf"){if(!clientShared){res.writeHead(404);res.end();return}res.writeHead(200,{"Content-Type":"application/octet-stream"});res.end(pdf);return}
  if(p==="/cabinet/"){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(admin);return}
@@ -19,7 +22,7 @@ const server=http.createServer((req,res)=>{
  if(p==="/api/projects"){json(res,{projects:rows,covers:[],categories:["Кухни"],stages:["Замер"]});return}
  if(p==="/public/prices"){json(res,{entries:[],updated:0});return}
  if(p==="/public/portfolio"){json(res,{projects:[],covers:{}});return}
- if(/^\/static\/(?:admin\.js|admin\.css|install\.js)$/.test(p)){res.writeHead(200,{"Content-Type":p.endsWith(".js")?"text/javascript":"text/css"});res.end(fs.readFileSync("cabinet"+p));return}
+ if(/^\/static\/(?:admin\.js|admin\.css|install\.js|client-messages\.js)$/.test(p)){res.writeHead(200,{"Content-Type":p.endsWith(".js")?"text/javascript":"text/css"});res.end(fs.readFileSync("cabinet"+p));return}
  if(/^\/showroom\/(?:scene|public)-[a-z0-9-]+\.webp$/.test(p)){const f=p.split("/").pop();if(fs.existsSync(f)){res.writeHead(200,{"Content-Type":"image/webp"});res.end(fs.readFileSync(f));return}}
  res.writeHead(404);res.end();
 });
@@ -40,6 +43,6 @@ const server=http.createServer((req,res)=>{
  assert.equal(await p.locator("#kitchen img").count(),5);
  assert.equal(await p.locator("#kitchen .lit").evaluateAll(v=>new Set(v.map(x=>x.src)).size),1);
  assert.equal(await p.locator("#kitchen .switch").count(),0);await p.waitForFunction(()=>document.getElementById("kitchen").classList.contains("on"));assert.equal(await p.locator("body").evaluate(e=>e.classList.contains("lights-on")),true);
- await p.goto(base+"/showroom/?qa-client#client");await p.locator("#client-profile").waitFor({state:"visible"});assert.match(await p.locator("#client-orders").innerText(),/L-000123/);assert.equal(await p.locator("#client-orders progress").getAttribute("value"),"2");const clientDownload=p.waitForEvent("download");await p.getByRole("button",{name:"Скачать "+filename,exact:true}).tap();const clientFile=await clientDownload;assert.equal(clientFile.suggestedFilename(),filename);assert.deepEqual(fs.readFileSync(await clientFile.path()),pdf);clientStage=3;clientShared=false;await p.locator("#client-refresh").tap();await p.waitForFunction(()=>document.querySelector("#client-orders progress").value===3);assert.equal(await p.getByRole("button",{name:"Скачать "+filename,exact:true}).count(),0);assert.deepEqual(errors,[]);console.log("PASS V5.64 client order cards, progress refresh, document download and revoked access");
+ await p.goto(base+"/showroom/?qa-client#client");await p.locator("#client-profile").waitFor({state:"visible"});assert.match(await p.locator("#client-orders").innerText(),/L-000123/);assert.equal(await p.locator("#client-orders progress").getAttribute("value"),"2");await p.getByText("Переписка с дизайнером",{exact:true}).tap();await p.getByText("Сообщений пока нет.",{exact:true}).waitFor();await p.getByLabel("Сообщение дизайнеру").fill("<b>Вопрос</b>");await p.getByRole("button",{name:"Отправить сообщение",exact:true}).tap();await p.getByText("<b>Вопрос</b>",{exact:true}).waitFor();assert.equal(await p.locator("#client-orders details b").count(),0);messages.push({author:"designer",body:"Ответ дизайнера",created:101});await p.getByRole("button",{name:"Обновить переписку",exact:true}).tap();await p.getByText("Ответ дизайнера",{exact:true}).waitFor();console.log("PASS V5.66 client conversation send, refresh and plain-text rendering");const clientDownload=p.waitForEvent("download");await p.getByRole("button",{name:"Скачать "+filename,exact:true}).tap();const clientFile=await clientDownload;assert.equal(clientFile.suggestedFilename(),filename);assert.deepEqual(fs.readFileSync(await clientFile.path()),pdf);clientStage=3;clientShared=false;await p.locator("#client-refresh").tap();await p.waitForFunction(()=>document.querySelector("#client-orders progress").value===3);assert.equal(await p.getByRole("button",{name:"Скачать "+filename,exact:true}).count(),0);assert.deepEqual(errors,[]);console.log("PASS V5.64 client order cards, progress refresh, document download and revoked access");
  console.log("PASS V5.23 actual admin search/filter/number, legacy lookup, publication guard, 16 decoded WebP assets and illumination");
 }finally{await b.close();server.close()}})().catch(e=>{console.error(e);server.close();process.exitCode=1});
