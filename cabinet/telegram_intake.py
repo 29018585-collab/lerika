@@ -11,6 +11,33 @@ def order_id(key, digest, code):
     return hmac.new(key.encode(), ("tg-test-order:" + digest + ":" + code).encode(), hashlib.sha256).hexdigest()[:32]
 
 
+STAGE_LABELS = ("Исходное помещение","Замеры и эскизы","3D-проект","Изготовление","Монтаж","Готовая мебель")
+
+def status_text(c, digest, value=None):
+    sql = """SELECT n.number,p.stage,p.status,d.created
+             FROM telegram_test_owners o
+             JOIN design_requests d ON d.id=o.request_id
+             JOIN request_numbers n ON n.request_id=d.id
+             JOIN projects p ON p.id=d.id
+             WHERE o.chat_key=? AND p.published=0"""
+    params = [digest]
+    if value is not None:
+        if not re.fullmatch(r"L-[0-9]{6,12}",value):
+            return "Введите номер в формате /status L-000001."
+        sql += " AND n.number=?"
+        params.append(int(value[2:]))
+    rows = c.execute(sql+" ORDER BY d.created DESC,n.number DESC LIMIT 10",tuple(params)).fetchall()
+    if not rows:
+        return "Заявка не найдена или недоступна." if value is not None else "У вас пока нет сохранённых тестовых заявок в новой системе истории."
+    lines = ["ТЕСТОВЫЕ ЗАЯВКИ · последние 10" if value is None else "СТАТУС ТЕСТОВОЙ ЗАЯВКИ"]
+    for row in rows:
+        stage = row["stage"]
+        label = STAGE_LABELS[stage-1] if type(stage) is int and 1<=stage<=6 else "Уточняется"
+        number = "L-"+str(row["number"]).zfill(6)
+        lines.append(number+" · "+label+" · "+("Готово" if row["status"]=="ready" else "В работе"))
+    lines.append("Данные из закрытого кабинета. Это тестовые заявки, не производственные заказы.")
+    return "\n\n".join(lines)
+
 def handle_test_order(text, digest, key, db, lock, allocate_number, existing_number, reserve_limits, notify, now=None):
     if not isinstance(text, str):
         return None
@@ -20,12 +47,18 @@ def handle_test_order(text, digest, key, db, lock, allocate_number, existing_num
         text = "/begin_test"
     elif text == "📋 Черновик":
         text = "/draft"
+    elif text == "📦 Мои заявки":
+        text = "/orders"
     elif text.startswith("✅ Отправить "):
         text = "/confirm " + text[len("✅ Отправить "):]
     elif text.startswith("❌ Отменить "):
         text = "/cancel " + text[len("❌ Отменить "):]
     command, _, value = text.partition(" ")
     value = value.strip()
+    if command in ("/orders", "/status"):
+        with db() as c:
+            lock(c,82003)
+            return status_text(c,digest,value if command=="/status" else None)
     if command not in ("/order_test", "/begin_test", "/draft", "/confirm", "/cancel"):
         if not text or text.startswith("/") or text == "🌐 Инструменты сайта":
             return None
@@ -96,6 +129,7 @@ def handle_test_order(text, digest, key, db, lock, allocate_number, existing_num
                 c.execute("INSERT INTO files VALUES(?,?,?,?,?,?,0,?)",(secrets.token_hex(16),rid,1,f["name"],"application/octet-stream",0,f["data"]))
             c.execute("INSERT INTO design_requests VALUES(?,?)", (rid, now))
             number = allocate_number(c, rid)
+            c.execute("INSERT INTO telegram_test_owners(request_id,chat_key) VALUES(?,?)",(rid,digest))
             c.execute("UPDATE projects SET title=? WHERE id=?", ("ТЕСТ · Telegram · "+number, rid))
             c.execute("DELETE FROM telegram_test_drafts WHERE chat_key=?", (digest,))
             clear_files(c, digest)
@@ -121,5 +155,5 @@ def pilot_keyboard(digest,db,lock,now=None):
         keyboard.append([{"text":"❌ Отменить "+row["code"]}])
     else:
         keyboard=[[{"text":"➕ Новая тестовая заявка"}]]
-    keyboard.append([{"text":"🌐 Инструменты сайта"}])
+    keyboard.append([{"text":"📦 Мои заявки"},{"text":"🌐 Инструменты сайта"}])
     return {"keyboard":keyboard,"resize_keyboard":True,"is_persistent":True}
