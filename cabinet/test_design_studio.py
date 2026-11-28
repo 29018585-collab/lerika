@@ -137,6 +137,39 @@ class StudioTests(unittest.TestCase):
             self.assertEqual(downloaded.data,originals[f["name"]])
             self.assertIn("attachment",downloaded.headers["Content-Disposition"])
 
+    def test_v566_private_order_conversation(self):
+        headers={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        owner={"name":"Message QA","email":"thread@example.invalid","password":"long-test-password-123","consent":True}
+        self.assertEqual(self.client.post("/api/client/register",json=owner,headers=headers,base_url=ORIGIN).status_code,201)
+        rid=self.submit(self.data()).json["id"]
+        url="/api/client/orders/"+rid+"/messages"
+        admin_url="/api/projects/"+rid+"/messages"
+        other=app.test_client()
+        self.assertEqual(other.get(url,base_url=ORIGIN).status_code,401)
+        self.assertEqual(other.post("/api/client/register",json={**owner,"email":"other-thread@example.invalid"},headers=headers,base_url=ORIGIN).status_code,201)
+        self.assertEqual(other.get(url,base_url=ORIGIN).status_code,404)
+        self.assertEqual(other.post(url,json={"text":"forbidden"},headers=headers,base_url=ORIGIN).status_code,404)
+        self.assertEqual(self.client.get(admin_url,base_url=ORIGIN).status_code,401)
+        self.assertEqual(self.client.post(url,json={"text":"test"},base_url=ORIGIN).status_code,403)
+        self.assertEqual(self.client.post(url,json={"text":" "},headers=headers,base_url=ORIGIN).status_code,400)
+        self.assertEqual(self.client.post(url,json={"text":"x"*2001},headers=headers,base_url=ORIGIN).status_code,400)
+        text="<script>QA</script> Уточните фасады."
+        r=self.client.post(url,json={"text":text,"author":"designer"},headers=headers,base_url=ORIGIN)
+        self.assertEqual(r.status_code,201)
+        self.assertEqual(r.json["messages"][0]["author"],"client")
+        admin=app.test_client()
+        h={"X-CSRF":admin.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN).json["csrf"]}
+        self.assertEqual(admin.get(admin_url,base_url=ORIGIN).json["messages"][0]["body"],text)
+        self.assertEqual(admin.post(admin_url,json={"text":"Ответ"},base_url=ORIGIN).status_code,403)
+        self.assertEqual(admin.post(admin_url,json={"text":"Ответ"},headers=h,base_url=ORIGIN).status_code,201)
+        messages=self.client.get(url,base_url=ORIGIN).json["messages"]
+        self.assertEqual({m["author"]:m["body"] for m in messages},{"client":text,"designer":"Ответ"})
+        self.assertNotIn(text,self.client.get("/public/portfolio").get_data(as_text=True))
+        self.assertEqual(admin.delete("/api/projects/"+rid,json={"confirm":True},headers=h,base_url=ORIGIN).status_code,200)
+        with db() as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) AS n FROM client_order_messages").fetchone()["n"],0)
+        self.assertEqual(self.client.get(url,base_url=ORIGIN).status_code,404)
+
     def test_v564_client_document_explicit_share_and_revoke(self):
         headers={"Origin":ORIGIN,"X-Lerika-Client":"1"}
         owner={"name":"Client QA","email":"share@example.invalid","password":"long-test-password-123","consent":True}
