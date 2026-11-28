@@ -112,9 +112,11 @@ def receive_attachment(message,digest,token,db,lock,now=None,downloader=download
         with db() as c:
             lock(c,82003)
             purge_expired(c,now)
-            row=c.execute("SELECT code FROM telegram_test_drafts WHERE chat_key=?",(digest,)).fetchone()
+            row=c.execute("SELECT code,brief FROM telegram_test_drafts WHERE chat_key=?",(digest,)).fetchone()
             if not row:
-                return "Сначала создайте тестовый черновик: /order_test описание. Затем отправляйте файлы."
+                return "Сначала нажмите «Новая тестовая заявка» и введите описание."
+            if not row["brief"]:
+                return "Сначала введите описание заявки. Затем прикрепите файлы."
             code=row["code"]
             u=usage(c,digest,code)
             if u["n"]>=MAX_FILES or u["size"]+size>MAX_BYTES:
