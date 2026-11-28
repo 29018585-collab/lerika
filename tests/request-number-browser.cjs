@@ -23,6 +23,7 @@ const server=http.createServer((req,res)=>{
  if(p==="/cabinet/"){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(admin);return}
  if(p==="/session"){res.setHeader("Set-Cookie","qa_session=1; Path=/; HttpOnly; SameSite=Strict");json(res,{csrf:"synthetic"});return}
  if(p==="/api/files/qa-pdf"){if(deny||!req.headers.cookie?.includes("qa_session=1")){res.writeHead(401);res.end("Unauthorized");return}downloads++;res.writeHead(200,{"Content-Type":"application/pdf","Content-Disposition":"attachment; filename=qa.pdf"});res.end(pdf);return}
+ if(p==="/api/clients"){json(res,{clients:[{id:"client-one",name:"Клиент QA",email:"qa@example.invalid",created:100,orders:[{id:rows[0].id,number:rows[0].request_number,title:rows[0].title,created:100,stage:1,status:"work"}]},{id:"client-two",name:"Без заказов QA",email:"empty@example.invalid",created:200,orders:[]}]});return}
  if(p==="/api/projects"){json(res,{projects:rows,covers:[],categories:["Кухни"],stages:["Замер"]});return}
  if(p==="/public/prices"){json(res,{entries:[],updated:0});return}
  if(p==="/public/portfolio"){json(res,{projects:[],covers:{}});return}
@@ -33,7 +34,7 @@ const server=http.createServer((req,res)=>{
 (async()=>{await new Promise(r=>server.listen(0,"127.0.0.1",r));const b=await chromium.launch({headless:true});try{
  const base="http://127.0.0.1:"+server.address().port,p=await b.newPage({viewport:{width:390,height:844},hasTouch:true,acceptDownloads:true}),errors=[];
  p.on("pageerror",e=>errors.push(e.message));await p.route("**/*",route=>route.request().url().startsWith(base+"/")?route.continue():route.abort());
- await p.goto(base+"/cabinet/");await p.locator("#workspace").waitFor({state:"visible"});await p.locator("#viewRequests").click();
+ await p.goto(base+"/cabinet/");await p.locator("#workspace").waitFor({state:"visible"});await p.locator("#viewClients").click();await p.getByText("Клиентов: 2 из 2",{exact:true}).waitFor();await p.locator("#clientFilter").selectOption("empty");assert.equal(await p.locator("#clientsRows article").count(),1);await p.getByText("Без заказов QA",{exact:true}).waitFor();await p.locator("#clientFilter").selectOption("work");await p.getByText("Клиент QA",{exact:true}).waitFor();await p.locator("#clientFilter").selectOption("all");await p.locator("#clientSearch").fill("L-000123");assert.equal(await p.locator("#clientsRows article").count(),1);await p.locator("#clientsRows summary").filter({hasText:"История заказов"}).tap();await p.getByRole("button",{name:"Открыть L-000123",exact:true}).tap();await p.locator("#requestOrigin").waitFor({state:"visible"});assert.match(await p.locator("#requestOrigin").innerText(),/L-000123/);await p.locator("#requestSearch").fill("");console.log("PASS V5.71 client cards, filters, order-number search and direct navigation");await p.locator("#viewRequests").click();
  assert.equal(await p.locator("#requestList .request-item").count(),2);
  await p.locator("#requestSearch").fill("L-000123");assert.equal(await p.locator("#requestList .request-item").count(),1);assert.match(await p.locator("#requestList").innerText(),/L-000123/);
  await p.getByRole("button",{name:"Открыть заявку",exact:true}).click();assert.match(await p.locator("#requestOrigin").innerText(),/L-000123.*Коллекция изделий/);assert.equal(await p.locator("#publish").isVisible(),false);
