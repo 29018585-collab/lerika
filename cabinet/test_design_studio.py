@@ -137,6 +137,42 @@ class StudioTests(unittest.TestCase):
             self.assertEqual(downloaded.data,originals[f["name"]])
             self.assertIn("attachment",downloaded.headers["Content-Disposition"])
 
+    def test_v564_client_document_explicit_share_and_revoke(self):
+        headers={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        owner={"name":"Client QA","email":"share@example.invalid","password":"long-test-password-123","consent":True}
+        self.assertEqual(self.client.post("/api/client/register",json=owner,headers=headers,base_url=ORIGIN).status_code,201)
+        original=b"%PDF-1.4\nQA shared document\n%%EOF"
+        d=self.data();d["files"]=[(io.BytesIO(original),"plan.pdf")]
+        r=self.client.post("/api/order-requests",data=d,headers={"Origin":ORIGIN,"X-Lerika-Studio":"5.8"},base_url=ORIGIN,content_type="multipart/form-data")
+        self.assertEqual(r.status_code,201)
+        rid=r.json["id"]
+        admin=app.test_client()
+        h={"X-CSRF":admin.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN).json["csrf"]}
+        project=next(p for p in admin.get("/api/projects",base_url=ORIGIN).json["projects"] if p["id"]==rid)
+        self.assertTrue(project["client_share_available"])
+        fid=project["files"][0]["id"]
+        url="/api/client/files/"+fid
+        def orders():
+            return self.client.get("/api/client/session",base_url=ORIGIN).json["orders"]
+        self.assertEqual(orders()[0]["files"],[])
+        self.assertEqual(self.client.get(url,base_url=ORIGIN).status_code,404)
+        self.assertEqual(admin.put("/api/files/"+fid+"/client-share",json={"shared":True},base_url=ORIGIN).status_code,403)
+        self.assertEqual(admin.put("/api/files/"+fid+"/client-share",json={"shared":True},headers=h,base_url=ORIGIN).status_code,200)
+        self.assertEqual(orders()[0]["files"][0]["id"],fid)
+        download=self.client.get(url,base_url=ORIGIN)
+        self.assertEqual(download.status_code,200)
+        self.assertEqual(download.data,original)
+        self.assertIn("no-store",download.headers["Cache-Control"])
+        other=app.test_client()
+        self.assertEqual(other.get(url,base_url=ORIGIN).status_code,401)
+        self.assertEqual(other.post("/api/client/register",json={**owner,"email":"other-share@example.invalid"},headers=headers,base_url=ORIGIN).status_code,201)
+        self.assertEqual(other.get(url,base_url=ORIGIN).status_code,404)
+        self.assertEqual(other.get("/api/client/session",base_url=ORIGIN).json["orders"],[])
+        self.assertEqual(other.get("/public/photos/"+fid).status_code,404)
+        self.assertEqual(admin.put("/api/files/"+fid+"/client-share",json={"shared":False},headers=h,base_url=ORIGIN).status_code,200)
+        self.assertEqual(orders()[0]["files"],[])
+        self.assertEqual(self.client.get(url,base_url=ORIGIN).status_code,404)
+
     def test_universal_order_rejects_bad_archive_and_executable(self):
         for name in ("bad.zip","program.exe"):
             d=self.data();d["files"]=(io.BytesIO(b"not an archive"),name)
