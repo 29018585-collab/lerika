@@ -236,6 +236,22 @@ def qwen_connection_test():
     except Exception:
         return False,"Не удалось получить корректный ответ от Groq."
 
+@app.get("/api/admin/ai")
+@admin
+def ai_admin_status():
+    return jsonify(model=LERIKA_AI_MODEL,configured=bool(os.environ.get("LERIKA_GROQ_API_KEY","").strip()),telegram_configured=bool(os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip() and os.environ.get("LERIKA_TELEGRAM_ADMIN_CHAT_ID","").strip()),rag=False,memory=False)
+
+@app.post("/api/admin/ai/test")
+@admin
+def ai_admin_test():
+    if not valid_public_origin():
+        abort(403)
+    if not os.environ.get("LERIKA_GROQ_API_KEY","").strip():
+        return jsonify(ok=False,message="Ключ Groq не настроен.")
+    reserve_limits([("lerika-ai-test-global-day",3,86400),("lerika-ai-test-global-minute",1,60)])
+    ok,message=qwen_connection_test()
+    return jsonify(ok=ok,message=message)
+
 @app.route("/cabinet/ai-test",methods=["GET","POST"])
 @admin
 def ai_test_page():
