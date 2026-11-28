@@ -46,6 +46,8 @@ def registration(text,digest,db,lock,now=None):
         c.execute("DELETE FROM telegram_test_subscriptions WHERE chat_key=?",(digest,))
         c.execute("DELETE FROM telegram_test_files WHERE chat_key=?",(digest,))
         c.execute("DELETE FROM telegram_test_drafts WHERE chat_key=?",(digest,))
+        from telegram_web_link import unlink_chat
+        unlink_chat(c,digest)
         c.execute("DELETE FROM telegram_pilot_clients WHERE chat_key=?",(digest,))
         c.execute("DELETE FROM telegram_pilot_pending WHERE chat_key=?",(digest,))
         return "Вы вышли из теста. Черновик удалён, уведомления отключены. Отправленные заявки остаются в кабинете."
