@@ -13,5 +13,12 @@ jobs:
       - name: Syntax and isolated SQLite regression
         working-directory: cabinet
         run: |
-          python3 -m py_compile app.py telegram_core.py telegram_intake.py telegram_files.py
+          python3 -m py_compile app.py telegram_core.py telegram_intake.py telegram_files.py telegram_client_pilot.py telegram_stage_notifications.py telegram_web_link.py
           python3 -m unittest -v test_telegram_files_qa
+      - name: Current planner and placement regressions
+        run: |
+          node tests/room-planner.cjs
+          node tests/free_rotation_qa.cjs
+          node tests/surface_placement_qa.cjs
+          node tests/product_parameters_qa.cjs
+          node tests/apartment_wizard_drag_qa.cjs
