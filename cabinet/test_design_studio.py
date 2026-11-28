@@ -197,7 +197,7 @@ class StudioTests(unittest.TestCase):
             csrf=login.json["csrf"]
             project=next(p for p in admin.get("/api/projects",base_url=ORIGIN).json["projects"] if p["id"]==website_result["id"])
             def stage(value):
-                return admin.put("/api/projects/"+project["id"],base_url=ORIGIN,headers={"X-CSRF":csrf},json={**project,"stage":value})
+                return admin.put("/api/projects/"+project["id"],base_url=ORIGIN,headers={"X-CSRF":csrf},json={**project,"stage":value,"published":bool(project["published"])})
             with patch("telegram_core.bot_call",return_value={"message_id":1}) as sender:
                 self.assertEqual(stage(2).status_code,200)
                 sender.assert_not_called()
