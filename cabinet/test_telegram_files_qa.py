@@ -4,7 +4,7 @@ import sqlite3
 import time
 import unittest
 from telegram_files import attachment_from_message, validate_bytes, receive_attachment, IntakeError, MAX_BYTES
-from telegram_intake import handle_test_order
+from telegram_intake import handle_test_order, pilot_keyboard
 
 class TelegramFileQA(unittest.TestCase):
     def setUp(self):
@@ -95,6 +95,40 @@ class TelegramFileQA(unittest.TestCase):
             self.assertIn("прикреплён",self.receive(str(i)+".pdf",self.raw+str(i).encode()))
         self.assertIn("Лимит",self.receive("extra.pdf",self.raw+b"extra"))
         self.assertEqual(self.count("telegram_test_files"),10)
+    def buttons(self):
+        return [b["text"] for row in pilot_keyboard(self.digest,self.db,self.lock)["keyboard"] for b in row]
+    def test_button_flow(self):
+        self.assertIn("➕ Новая тестовая заявка",self.buttons())
+        self.order("➕ Новая тестовая заявка")
+        code=self.code()
+        self.assertNotIn("✅ Отправить "+code,self.buttons())
+        self.assertIn("Сначала",self.receive())
+        self.assertIn("Сначала",self.order("✅ Отправить "+code))
+        self.assertIn("Описание сохранено",self.order("Тестовая мебель для условной комнаты"))
+        self.assertIn("✅ Отправить "+code,self.buttons())
+        self.assertIn("прикреплён",self.receive())
+        self.assertIn("Вложений: 1",self.order("📋 Черновик"))
+        self.assertIn("L-000001",self.order("✅ Отправить "+code))
+        self.assertIn("L-000001",self.order("✅ Отправить "+code))
+        self.assertEqual(self.count("files"),1)
+        self.assertEqual(self.count("design_requests"),1)
+        self.assertEqual(len(self.notices),1)
+        self.assertIn("➕ Новая тестовая заявка",self.buttons())
+    def test_stale_buttons_and_duplicate_begin(self):
+        self.order("➕ Новая тестовая заявка")
+        old=self.code()
+        self.order("➕ Новая тестовая заявка")
+        self.assertEqual(self.code(),old)
+        self.order("❌ Отменить "+old)
+        self.order("➕ Новая тестовая заявка")
+        new=self.code()
+        self.assertNotEqual(old,new)
+        self.assertIn("старому",self.order("❌ Отменить "+old))
+        self.assertIn("Код не подходит",self.order("✅ Отправить "+old))
+        self.assertEqual(self.code(),new)
+        self.assertEqual(self.count("design_requests"),0)
+        self.assertIsNone(self.order("🌐 Инструменты сайта"))
+        self.assertIsNone(self.order("/ai synthetic question"))
     def test_photo_and_path(self):
         spec=attachment_from_message({"photo":[{"file_size":3,"file_id":"small"},{"file_size":5,"file_id":"big","file_unique_id":"x"}]})
         self.assertEqual(spec[1:],("big",5))
