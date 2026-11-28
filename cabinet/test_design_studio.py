@@ -275,6 +275,21 @@ class StudioTests(unittest.TestCase):
             login=admin.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
             csrf=login.json["csrf"]
             project=next(p for p in admin.get("/api/projects",base_url=ORIGIN).json["projects"] if p["id"]==website_result["id"])
+            tg_project=next(p for p in admin.get("/api/projects",base_url=ORIGIN).json["projects"] if p["request_number"]==telegram_number)
+            self.assertTrue(tg_project["client_share_available"])
+            document=b"%PDF-1.4\nTelegram QA\n%%EOF"
+            up=admin.post("/api/projects/"+tg_project["id"]+"/files",base_url=ORIGIN,headers={"X-CSRF":csrf},data={"stage":"3","file":(io.BytesIO(document),"telegram-plan.pdf")},content_type="multipart/form-data")
+            self.assertEqual(up.status_code,201)
+            fid=up.json["id"]
+            download_url="/api/client/files/"+fid
+            share_url="/api/files/"+fid+"/client-share"
+            self.assertEqual(self.client.get(download_url,base_url=ORIGIN).status_code,404)
+            self.assertEqual(admin.put(share_url,json={"shared":True},headers={"X-CSRF":csrf},base_url=ORIGIN).status_code,200)
+            self.assertEqual(self.client.get(download_url,base_url=ORIGIN).data,document)
+            self.assertEqual(other.get(download_url,base_url=ORIGIN).status_code,404)
+            self.assertEqual(next(o for o in session()["orders"] if o["number"]==telegram_number)["files"][0]["id"],fid)
+            with patch.dict(os.environ,{"LERIKA_TG_CLIENT_PILOT":"0"}):
+                self.assertEqual(self.client.get(download_url,base_url=ORIGIN).status_code,404)
             def stage(value):
                 return admin.put("/api/projects/"+project["id"],base_url=ORIGIN,headers={"X-CSRF":csrf},json={**project,"stage":value,"published":bool(project["published"])})
             with patch("telegram_core.bot_call",return_value={"message_id":1}) as sender:
@@ -291,6 +306,10 @@ class StudioTests(unittest.TestCase):
                 self.assertEqual(stage(3).status_code,200)
                 self.assertEqual(sender.call_count,1)
                 self.assertTrue(web("unlink").json["ok"])
+                self.assertEqual(self.client.get(download_url,base_url=ORIGIN).status_code,404)
+                self.assertEqual(admin.put(share_url,json={"shared":True},headers={"X-CSRF":csrf},base_url=ORIGIN).status_code,409)
+                with db() as c:
+                    self.assertIsNone(c.execute("SELECT file FROM client_file_shares WHERE file=?",(fid,)).fetchone())
                 self.assertEqual(stage(4).status_code,200)
                 self.assertEqual(sender.call_count,1)
             self.assertFalse(session()["telegram_linked"])
