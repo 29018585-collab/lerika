@@ -95,6 +95,17 @@ await page.locator("#lz-item-pick").selectOption("1");assert.match(await page.lo
 await page.locator("#lz-close").tap();await page.locator("#lp-clear").click();await page.locator("#lp-type").selectOption("wardrobe");await page.locator("#lp-add").click();
 await page.locator("#lp-x").fill("1000");await page.locator("#lp-z").fill("1000");await page.locator("#lp-item-apply").click();
 assert.ok(await page.locator("#lp-csv").isEnabled());
+await page.locator("#lp-3d").click();await page.locator("#lz-open-lp-view").click();
+const initial3D=await page.evaluate(()=>LerikaRoomProject.snapshot());
+await page.locator("#lz-turn-right").tap();assert.equal((await page.evaluate(()=>LerikaRoomProject.snapshot())).items[0].rot,(initial3D.items[0].rot+1)%4);
+await page.locator("#lz-turn-left").tap();assert.deepEqual(await page.evaluate(()=>LerikaRoomProject.snapshot()),initial3D);
+await page.locator("#lz-close").tap();
+const roomDepth=initial3D.r.d;await page.locator("#lp-z").fill(String(roomDepth-initial3D.items[0].d));await page.locator("#lp-item-apply").click();
+assert.ok(await page.locator("#lp-csv").isEnabled());
+await page.locator("#lz-open-lp-view").click();const wallState=await page.evaluate(()=>LerikaRoomProject.snapshot());
+await page.locator("#lz-turn-right").tap();assert.deepEqual(await page.evaluate(()=>LerikaRoomProject.snapshot()),wallState,"blocked 3D rotation must not mutate the room");
+assert.match(await page.locator("#lz-room-status").innerText(),/пересекает/);
+await page.locator("#lz-close").tap();await page.locator("#lp-z").fill("1000");await page.locator("#lp-item-apply").click();
 await page.locator("#lp-2d").click();await page.locator("#lz-open-lp-view").click();
 const initialTurn=await page.evaluate(()=>LerikaRoomProject.snapshot());
 await page.locator("#lz-turn-right").tap();
