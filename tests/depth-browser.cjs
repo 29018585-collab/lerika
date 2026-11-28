@@ -39,7 +39,7 @@ const results=await p.evaluate(()=>{
  }
  return out;
 });
-assert.equal(results.length,112);for(const q of results){assert.ok(q.visible>0,JSON.stringify(q));assert.equal(q.different,0,JSON.stringify(q))}
+const expected=["wardrobe","coupe","coupeMirror","hall","kitchen","wallcab","sideboard","tv","bookcase","desk","table","bed","nightstand","bath"].flatMap(type=>[...Array.from({length:8},(_,i)=>type+":closed-"+i),...(["wardrobe","kitchen"].includes(type)?Array.from({length:8},(_,i)=>type+":open-"+i):[])]);assert.equal(results.length,128);assert.deepEqual(results.map(q=>q.type+":"+q.label).sort(),expected.sort());for(const q of results){assert.ok(q.visible>0,JSON.stringify(q));assert.equal(q.different,0,JSON.stringify(q))}
 await p.locator("#lab3-type").selectOption("wardrobe");await p.locator("#lab3-shelf-0").selectOption("7");assert.match(await p.locator("#lab3-sections select").first().locator('option[value="shelves"]').textContent(),/7 полок/);
 assert.deepEqual(errors,[]);console.log("PASS BUG-004 independent ray-box oracle:",results.length,"views,",results.reduce((n,r)=>n+r.checked+r.ambiguous,0),"pixels,",results.reduce((n,r)=>n+r.different,0),"owner mismatches; BUG-024 dynamic shelf label");
 }finally{await b.close();server.close()}})().catch(e=>{console.error(e);server.close();process.exitCode=1});
