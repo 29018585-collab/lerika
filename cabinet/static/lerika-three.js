@@ -106,7 +106,7 @@ function render(ctx,canvas,boxes,view,selected){
   }
   engine.render(scene,c);
   if(engine.getContext().isContextLost())throw Error("context lost");
-  ctx.drawImage(engine.domElement,0,0,W,H);last="webgl";reason="";
+  ctx.save();try{ctx.setTransform(1,0,0,1,0,0);ctx.drawImage(engine.domElement,0,0,W,H)}finally{ctx.restore()}last="webgl";reason="";
   return {scale:frame.scale,floor:frame.floor,plane:frame.plane,hit:(x,y)=>hitFrame(frame,boxes,x,y),engine:"webgl"};
  }catch(_){failed=true;last="software";reason="Ошибка WebGL — включена резервная отрисовка";disposeRenderer();return null}
  finally{for(const m of meshes)m.dispose();for(const m of materials)m.dispose();for(const light of scene.children)if(light.shadow?.map)light.shadow.map.dispose()}
