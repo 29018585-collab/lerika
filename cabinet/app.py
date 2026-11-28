@@ -123,6 +123,7 @@ if not SETUP_REQUIRED:
     CREATE TABLE IF NOT EXISTS request_numbers(number INTEGER PRIMARY KEY, request_id TEXT NOT NULL UNIQUE REFERENCES design_requests(id));
     CREATE TABLE IF NOT EXISTS telegram_test_owners(request_id TEXT PRIMARY KEY REFERENCES design_requests(id) ON DELETE CASCADE, chat_key TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS telegram_test_owners_chat ON telegram_test_owners(chat_key);
+    CREATE TABLE IF NOT EXISTS telegram_test_subscriptions(chat_key TEXT PRIMARY KEY);
     CREATE TABLE IF NOT EXISTS request_sequence(id INTEGER PRIMARY KEY CHECK(id=1), last_number INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS design_briefs(project TEXT PRIMARY KEY REFERENCES projects(id), brief TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS clients(id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, password_hash TEXT NOT NULL, created INTEGER NOT NULL);
@@ -357,8 +358,11 @@ def telegram_webhook():
     if is_admin:
         from telegram_intake import handle_test_order,pilot_keyboard
         from telegram_files import receive_attachment
+        from telegram_stage_notifications import preference
         try:
-            pilot=receive_attachment(message,digest,os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip(),db,lock)
+            pilot=preference(text,digest,db,lock)
+            if pilot is None:
+                pilot=receive_attachment(message,digest,os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip(),db,lock)
             if pilot is None:
                 pilot=handle_test_order(text,digest,KEY,db,lock,allocate_number,existing_number,reserve_limits,notify_telegram_order)
         except TooManyRequests:
@@ -965,12 +969,23 @@ def create_project():
 @app.put("/api/projects/<p>")
 @admin
 def edit_project(p):
+    from telegram_stage_notifications import event_for_edit,deliver_event
+    from telegram_core import bot_call
     rec=project_record(p)
+    event=None
     with db() as c:
         lock(c,82003)
         if rec[5] and c.execute("SELECT id FROM design_requests WHERE id=?",(p,)).fetchone(): abort(403)
+        old=c.execute("SELECT stage,status FROM projects WHERE id=?",(p,)).fetchone()
         if not c.execute("UPDATE projects SET category=?,title=?,description=?,stage=?,status=?,published=?,updated=? WHERE id=?",rec).rowcount: abort(404)
         c.execute("DELETE FROM covers WHERE file IN (SELECT id FROM files WHERE project=?) AND category<>?",(p,rec[0]))
+        event=event_for_edit(c,p,old,rec[3],rec[4])
+    if event is not None:
+        try:
+            if not deliver_event(event,KEY,os.environ.get("LERIKA_TELEGRAM_ADMIN_CHAT_ID","").strip(),os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip(),bot_call):
+                app.logger.warning("Telegram test stage notification not delivered")
+        except Exception:
+            app.logger.warning("Telegram test stage notification failed")
     return jsonify(ok=True)
 
 @app.post("/api/projects/<p>/files")
