@@ -124,6 +124,7 @@ if not SETUP_REQUIRED:
     CREATE TABLE IF NOT EXISTS telegram_test_owners(request_id TEXT PRIMARY KEY REFERENCES design_requests(id) ON DELETE CASCADE, chat_key TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS telegram_test_owners_chat ON telegram_test_owners(chat_key);
     CREATE TABLE IF NOT EXISTS telegram_test_subscriptions(chat_key TEXT PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS telegram_pilot_clients(chat_key TEXT PRIMARY KEY, created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS request_sequence(id INTEGER PRIMARY KEY CHECK(id=1), last_number INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS design_briefs(project TEXT PRIMARY KEY REFERENCES projects(id), brief TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS clients(id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, password_hash TEXT NOT NULL, created INTEGER NOT NULL);
@@ -339,9 +340,11 @@ def telegram_webhook():
     # A Telegram retry is acknowledged without a repeated reply.
     digest=hmac.new(KEY.encode(),str(cid).encode(),hashlib.sha256).hexdigest()[:32]
     is_admin=str(cid)==os.environ.get("LERIKA_TELEGRAM_ADMIN_CHAT_ID","").strip()
+    from telegram_client_pilot import allowed,enrolled,registration,registration_keyboard,JOIN,LEAVE
+    is_invited=not is_admin and allowed(cid,os.environ.get("LERIKA_TG_CLIENT_PILOT",""),os.environ.get("LERIKA_TG_PILOT_CHAT_IDS",""))
     try:
         # A ten-photo album produces ten individual Telegram updates.
-        reserve_limits([("lerika-tg-update-"+str(uid),1,86400),("lerika-tg-global-minute",30,60),("lerika-tg-chat-"+digest,16 if is_admin else 6,60)])
+        reserve_limits([("lerika-tg-update-"+str(uid),1,86400),("lerika-tg-global-minute",30,60),("lerika-tg-chat-"+digest,16 if is_admin or is_invited else 6,60)])
     except TooManyRequests:
         return jsonify(ok=True)
     def classify_preview(query):
@@ -355,7 +358,21 @@ def telegram_webhook():
             return fallback()
         return classify(query,key,LERIKA_AI_MODEL)
     pilot=None
-    if is_admin:
+    registered=False
+    registration_reply=None
+    if is_invited:
+        try:
+            registration_reply=registration(text,digest,db,lock)
+            with db() as c:
+                registered=enrolled(c,digest)
+        except Exception:
+            app.logger.warning("Telegram client pilot registration unavailable")
+            return jsonify(method="sendMessage",chat_id=cid,text="Тестовая регистрация временно недоступна.")
+        if registration_reply is not None or not registered:
+            from telegram_intake import pilot_keyboard
+            markup=pilot_keyboard(digest,db,lock,client=True) if registered else registration_keyboard(show_consent=text==JOIN)
+            return jsonify(method="sendMessage",chat_id=cid,text=registration_reply or "Закрытый тест ЛериКа. Для доступа зарегистрируйтесь.",reply_markup=markup)
+    if is_admin or registered:
         from telegram_intake import handle_test_order,pilot_keyboard
         from telegram_files import receive_attachment
         from telegram_stage_notifications import preference
@@ -374,11 +391,11 @@ def telegram_webhook():
         answer,markup=pilot,None
     else:
         answer,markup=answer_message(text,PUBLIC_ORIGIN,is_admin,classify_preview if is_admin else None)
-    if is_admin and text != "🌐 Инструменты сайта" and (pilot is not None or not (isinstance(text,str) and text.startswith("/ai "))):
+    if (is_admin or registered) and text != "🌐 Инструменты сайта" and (pilot is not None or not (is_admin and isinstance(text,str) and text.startswith("/ai "))):
         try:
-            markup=pilot_keyboard(digest,db,lock)
+            markup=pilot_keyboard(digest,db,lock,client=registered)
             if pilot is None:
-                answer="ЛериКа · Тестовый режим администратора. Используйте кнопки для создания и отправки вымышленных заявок. Реальные клиентские данные пока не принимаются."
+                answer="ЛериКа · Закрытый тест. Используйте кнопки для создания и отправки вымышленных заявок. Реальные клиентские данные пока не принимаются."
         except Exception:
             app.logger.warning("Telegram pilot keyboard unavailable")
     # Telegram can execute a Bot API method from the webhook response.
@@ -970,9 +987,11 @@ def create_project():
 @admin
 def edit_project(p):
     from telegram_stage_notifications import event_for_edit,deliver_event
+    from telegram_client_pilot import notification_chat
     from telegram_core import bot_call
     rec=project_record(p)
     event=None
+    recipient=""
     with db() as c:
         lock(c,82003)
         if rec[5] and c.execute("SELECT id FROM design_requests WHERE id=?",(p,)).fetchone(): abort(403)
@@ -980,9 +999,10 @@ def edit_project(p):
         if not c.execute("UPDATE projects SET category=?,title=?,description=?,stage=?,status=?,published=?,updated=? WHERE id=?",rec).rowcount: abort(404)
         c.execute("DELETE FROM covers WHERE file IN (SELECT id FROM files WHERE project=?) AND category<>?",(p,rec[0]))
         event=event_for_edit(c,p,old,rec[3],rec[4])
-    if event is not None:
+        recipient=notification_chat(c,event,KEY,os.environ.get("LERIKA_TELEGRAM_ADMIN_CHAT_ID","").strip(),os.environ.get("LERIKA_TG_CLIENT_PILOT",""),os.environ.get("LERIKA_TG_PILOT_CHAT_IDS",""))
+    if event is not None and recipient:
         try:
-            if not deliver_event(event,KEY,os.environ.get("LERIKA_TELEGRAM_ADMIN_CHAT_ID","").strip(),os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip(),bot_call):
+            if not deliver_event(event,KEY,recipient,os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip(),bot_call):
                 app.logger.warning("Telegram test stage notification not delivered")
         except Exception:
             app.logger.warning("Telegram test stage notification failed")
