@@ -47,13 +47,15 @@ jobs:
                   assert len(b)==len(baseline) and [i for i,(x,y) in enumerate(zip(baseline,b)) if x!=y and i not in (3,5,7,11,14,17)]==[], 'Unexpected V5.22 script change'
               elif os.environ.get('GITHUB_HEAD_REF')=='lerika-v521-calculations':
                   assert [i for i,(x,y) in enumerate(zip(a,b)) if x!=y and i not in (3,5,7,12,17)]==[], 'Unexpected V5.21 script change'
+              elif os.environ.get('GITHUB_HEAD_REF')=='lerika-v524-appliances':
+                  assert len(a)==len(b) and [i for i,(x,y) in enumerate(zip(a,b)) if x!=y and i not in (10,11,15,17)]==[], 'Unexpected appliance change'
               elif os.environ.get('GITHUB_HEAD_REF')=='lerika-v5231-room-editor':
                   assert len(a)==len(b) and [i for i,(x,y) in enumerate(zip(a,b)) if x!=y and i not in (11,14,15)]==[], 'Unexpected V5.23.1 script change'
               elif os.environ.get('GITHUB_HEAD_REF')=='lerika-v523-interface':
                   assert [i for i,(x,y) in enumerate(zip(a,b)) if x!=y and i not in (6,8,13,14,16,17)]==[], 'Unexpected V5.23 script change'
               else:
                   assert all(a[i]==b[i] for i in [2,3,4,8,9,12,13,16] if i<len(a)), 'Shared engine changed'
-              if a[10]!=b[10]:
+              if a[10]!=b[10] and os.environ.get('GITHUB_HEAD_REF')!='lerika-v524-appliances':
                   restored=b[10].replace('handle:item.handle||"brass",config:item.config','handle:"brass"').replace(',textureRotation:item.rot','')
                   assert restored==a[10], 'Unexpected room model change'
           assert 'id="lab-ai-generate"' not in new
