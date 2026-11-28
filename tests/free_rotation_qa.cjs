@@ -25,3 +25,25 @@ assert(result.bad);assert.equal(result.forced,1);assert(result.strict);assert(re
 assert(result.moved);assert(result.pairTurn);assert.equal(result.attached,4);assert(result.invalid);
 assert.equal(result.round.rot,0);assert.equal(result.round.x,result.sofa.x);assert.equal(result.round.z,result.sofa.z);
 console.log("PASS free rotation, overlapping draft, oversized room, four turns, recovery movement, attached objects");
+
+const boundary=vm.runInContext(`
+(()=>{
+ const P=window.LerikaRoomPlanner,r={w:4000,d:3000,h:2700},o=[],a=P.item("table",1,100,100),b=P.item("wardrobe",2,2200,100);
+ const move=(x,z)=>P.changePlacement(r,[a],o,{...a,x,z},"move");
+ const notch={...r,notch:{corner:"tr",w:1200,d:1200}};
+ const rot=P.rotationCandidate(r,[a],o,a,1,true);
+ const small={w:1800,d:1000,h:2700},t=P.item("table",3,0,0),forced=P.rotationCandidate(small,[t],o,t,1,true);
+ const back=P.rotationCandidate(small,[forced],o,forced,0,true);
+ return [
+ move(-10,100)===null,move(3900,100)===null,move(100,-10)===null,move(100,2900)===null,
+ !!move(1000,1000),!!P.changePlacement(r,[a,b],o,{...a,x:2200,z:100},"move"),
+ P.changePlacement(notch,[a],o,{...a,x:2200,z:100},"move")===null,
+ rot&&rot.rot===1&&P.insideRoom(r,P.model(rot)),
+ forced&&forced.rot===1&&!P.inspect(small,[forced],o).ok,
+ P.changePlacement(small,[forced],o,{...forced,x:0,z:0},"move")===null,
+ back&&back.rot===0&&P.inspect(small,[back],o).ok
+ ];
+})()
+`,context);
+assert.equal(boundary.length,11);assert(boundary.every(Boolean));
+console.log("PASS 11 room boundary and rotation recovery checks");
