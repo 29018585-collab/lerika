@@ -276,7 +276,29 @@ def qwen_connection_test():
 @app.get("/api/admin/ai")
 @admin
 def ai_admin_status():
-    return jsonify(model=LERIKA_AI_MODEL,configured=bool(os.environ.get("LERIKA_GROQ_API_KEY","").strip()),telegram_configured=bool(os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip() and os.environ.get("LERIKA_TELEGRAM_ADMIN_CHAT_ID","").strip()),rag=False,memory=False)
+    return jsonify(model=LERIKA_AI_MODEL,configured=bool(os.environ.get("LERIKA_GROQ_API_KEY","").strip()),telegram_configured=bool(os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip() and os.environ.get("LERIKA_TELEGRAM_ADMIN_CHAT_ID","").strip()),rag=False,memory=False,core_version="1.0")
+
+@app.post("/api/admin/ai/assistant")
+@admin
+def ai_admin_assistant():
+    from ai_core import classify
+    if not valid_public_origin():
+        abort(403)
+    if not request.is_json:
+        abort(415)
+    if request.content_length is None or request.content_length>8192:
+        abort(413)
+    body=request.get_json(silent=True)
+    if not isinstance(body,dict) or set(body)!={"text","synthetic"} or body.get("synthetic") is not True:
+        abort(400)
+    query=body.get("text")
+    if not isinstance(query,str) or not 1<=len(query.strip())<=800:
+        abort(400)
+    key=os.environ.get("LERIKA_GROQ_API_KEY","").strip()
+    if not key:
+        return jsonify(ok=False,message="Ключ Groq не настроен.")
+    reserve_limits([("lerika-ai-core-day",15,86400),("lerika-ai-core-minute",2,60)])
+    return jsonify(classify(query,key,LERIKA_AI_MODEL))
 
 @app.post("/api/admin/ai/access")
 @admin
