@@ -170,7 +170,8 @@ class StudioTests(unittest.TestCase):
             self.assertEqual(self.client.post("/api/client/register",json=d,headers=headers,base_url=ORIGIN).status_code,201)
             other=app.test_client()
             self.assertEqual(other.post("/api/client/register",json={**d,"email":"b@example.invalid"},headers=headers,base_url=ORIGIN).status_code,201)
-            website_order=self.submit(self.data()).json["number"]
+            website_result=self.submit(self.data()).json
+            website_order=website_result["number"]
             tg(JOIN);tg(CONSENT)
             tg("/order_test synthetic cabinet")
             with db() as c:
@@ -191,7 +192,28 @@ class StudioTests(unittest.TestCase):
             self.assertEqual({o["number"] for o in session()["orders"]},{website_order,telegram_number})
             self.assertEqual(session(other)["orders"],[])
             self.assertIn(website_order,tg("📦 Мои заявки")["text"])
-            self.assertTrue(web("unlink").json["ok"])
+            admin=app.test_client()
+            login=admin.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN)
+            csrf=login.json["csrf"]
+            project=next(p for p in admin.get("/api/projects",base_url=ORIGIN).json["projects"] if p["id"]==website_result["id"])
+            def stage(value):
+                return admin.put("/api/projects/"+project["id"],base_url=ORIGIN,headers={"X-CSRF":csrf},json={**project,"stage":value})
+            with patch("telegram_core.bot_call",return_value={"message_id":1}) as sender:
+                self.assertEqual(stage(2).status_code,200)
+                sender.assert_not_called()
+                tg("/notify_on")
+                self.assertEqual(stage(3).status_code,200)
+                self.assertEqual(sender.call_count,1)
+                payload=sender.call_args.args[2]
+                self.assertEqual(payload["chat_id"],123456)
+                self.assertIn(website_order,payload["text"])
+                self.assertIn("3D-проект",payload["text"])
+                self.assertNotIn("Тестовая",payload["text"])
+                self.assertEqual(stage(3).status_code,200)
+                self.assertEqual(sender.call_count,1)
+                self.assertTrue(web("unlink").json["ok"])
+                self.assertEqual(stage(4).status_code,200)
+                self.assertEqual(sender.call_count,1)
             self.assertFalse(session()["telegram_linked"])
             self.assertEqual({o["number"] for o in session()["orders"]},{website_order})
             self.assertNotIn(website_order,tg("📦 Мои заявки")["text"])
