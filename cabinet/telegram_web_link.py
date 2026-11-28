@@ -43,10 +43,13 @@ def confirm(c,client,key,proof,now,allowed_digests):
     return True
 
 def unlink(c,client):
+    c.execute("DELETE FROM client_file_shares WHERE client=? AND file IN (SELECT f.id FROM files f JOIN telegram_test_owners o ON o.request_id=f.project WHERE NOT EXISTS (SELECT 1 FROM client_requests cr WHERE cr.project=f.project))",(client,))
     c.execute("DELETE FROM telegram_web_pending WHERE client=?",(client,))
     c.execute("DELETE FROM telegram_web_links WHERE client=?",(client,))
 
 def unlink_chat(c,digest):
+    row=c.execute("SELECT client FROM telegram_web_links WHERE chat_key=?",(digest,)).fetchone()
+    if row: unlink(c,row["client"])
     c.execute("DELETE FROM telegram_web_pending WHERE chat_key=?",(digest,))
     c.execute("DELETE FROM telegram_web_links WHERE chat_key=?",(digest,))
 
