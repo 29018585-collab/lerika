@@ -1047,6 +1047,19 @@ function detailBoxes(a,base){
  }else return base;
  return out.length?out:base;
 }
+// Bedding is purely decorative: it is excluded from manufacturing parts and areas.
+function bedVisual(item,base){
+ const out=base.map(b=>b.color==="#eee9df"||b.color==="#d4c6b6"?{...b,texture:"fabric",visualSurface:"fabric"}:b);
+ const mattress=base.find(b=>b.color==="#eee9df"&&b.b===170);
+ if(mattress){
+  const inset=Math.min(35,mattress.a*.04),start=Math.min(520,mattress.c*.30),length=mattress.c-start-inset;
+  if(length>100&&mattress.a>inset*2){
+   out.push({x:mattress.x+inset,y:mattress.y+mattress.b-4,z:mattress.z+start,a:mattress.a-inset*2,b:32,c:length,color:"#c4b8a7",texture:"fabric",visualSurface:"fabric"});
+   out.push({x:mattress.x+inset,y:mattress.y+mattress.b+23,z:mattress.z+start,a:mattress.a-inset*2,b:8,c:Math.min(70,length),color:"#e1d8cb",texture:"fabric",visualSurface:"fabric"});
+  }
+ }
+ return out;
+}
 function model(item,opened=false,detailed=false){if(!item||(isAppliance(item.type)&&item.builtin)||!Object.hasOwn(presets,item.type)||!integer(item.rot,0,3)||!integer(item.x,-24000,24000)||!integer(item.z,-24000,24000)||!integer(item.elev,0,4000)||![item.body,item.face,item.top].every(v=>typeof v==="string"&&/^#[a-f0-9]{6}$/i.test(v)))return null;const p=schema(item.type);if(item.type==="partitionDoor"&&(item.w<500||item.h<600))return null;if(!["w","h","d"].every(k=>integer(item[k],p[k][1],p[k][2]))||(!p.sections&&item.n!==presets[item.type][4])||(item.type!=="wallcab"&&!isAppliance(item.type)&&item.elev!==0))return null;
 const m=isAppliance(item.type)?applianceBoxes(item):E.build(item,{body:item.body,face:item.face,top:item.top,doors:"closed",drawers:"closed",handle:item.handle||"brass",config:item.config});
 if(!m||!m.boxes.length)return null;
@@ -1054,8 +1067,8 @@ const turn=(x,z)=>[[x,z],[-z,x],[-x,-z],[z,-x]][item.rot];
 const rotated=m.boxes.map(b=>{const ps=[[b.x,b.z],[b.x+b.a,b.z],[b.x,b.z+b.c],[b.x+b.a,b.z+b.c]].map(p=>turn(...p)),xs=ps.map(p=>p[0]),zs=ps.map(p=>p[1]);return {x:Math.min(...xs),z:Math.min(...zs),y:b.y,a:Math.max(...xs)-Math.min(...xs),c:Math.max(...zs)-Math.min(...zs),b:b.b,color:b.color,textureRotation:item.rot}});
 const minX=Math.min(...rotated.map(b=>b.x)),minZ=Math.min(...rotated.map(b=>b.z)),maxX=Math.max(...rotated.map(b=>b.x+b.a)),maxZ=Math.max(...rotated.map(b=>b.z+b.c)),minY=Math.min(...rotated.map(b=>b.y)),maxY=Math.max(...rotated.map(b=>b.y+b.b));
 const visual=opened&&!isAppliance(item.type)?E.build(item,{body:item.body,face:item.face,top:item.top,doors:"all",drawers:"all",extension:.7,handle:item.handle||"brass",config:item.config}):null;
-const rawDetail=detailed&&isAppliance(item.type)?detailBoxes(item,m.boxes):null;
-const display=(visual||rawDetail)?(visual?visual.boxes:rawDetail).map(b=>{const ps=[[b.x,b.z],[b.x+b.a,b.z],[b.x,b.z+b.c],[b.x+b.a,b.z+b.c]].map(p=>turn(...p)),xs=ps.map(p=>p[0]),zs=ps.map(p=>p[1]),hinge=b.hinge?turn(...b.hinge):null;return {x:Math.min(...xs),z:Math.min(...zs),y:b.y,a:Math.max(...xs)-Math.min(...xs),c:Math.max(...zs)-Math.min(...zs),b:b.b,color:b.color,texture:b.texture,smooth:b.smooth,textureRotation:item.rot,hinge,angle:b.angle}}):rotated;
+const rawDetail=detailed?(item.type==="bed"?bedVisual(item,m.boxes):item.type==="showerScreen"?m.boxes.map(b=>({...b,visualSurface:"glass"})):isAppliance(item.type)?detailBoxes(item,m.boxes):null):null;
+const display=(visual||rawDetail)?(visual?visual.boxes:rawDetail).map(b=>{const ps=[[b.x,b.z],[b.x+b.a,b.z],[b.x,b.z+b.c],[b.x+b.a,b.z+b.c]].map(p=>turn(...p)),xs=ps.map(p=>p[0]),zs=ps.map(p=>p[1]),hinge=b.hinge?turn(...b.hinge):null;return {x:Math.min(...xs),z:Math.min(...zs),y:b.y,a:Math.max(...xs)-Math.min(...xs),c:Math.max(...zs)-Math.min(...zs),b:b.b,color:b.color,texture:b.texture,visualSurface:b.visualSurface,smooth:b.smooth,textureRotation:item.rot,hinge,angle:b.angle}}):rotated;
 // Decorative replacements are clipped to the original closed spatial envelope.
 const visible=rawDetail?display.map(b=>{const x=Math.max(b.x,minX),z=Math.max(b.z,minZ),y=Math.max(b.y,minY);return {...b,x,z,y,a:Math.min(b.x+b.a,maxX)-x,c:Math.min(b.z+b.c,maxZ)-z,b:Math.min(b.y+b.b,maxY)-y}}).filter(b=>b.a>0&&b.b>0&&b.c>0):display;
 return {item,boxes:visible.map(b=>({...b,x:b.x-minX+item.x,z:b.z-minZ+item.z,y:b.y+item.elev,hinge:b.hinge?[b.hinge[0]-minX+item.x,b.hinge[1]-minZ+item.z]:null})),x:item.x,z:item.z,w:maxX-minX,d:maxZ-minZ,lo:minY+item.elev,hi:maxY+item.elev,parts:m.parts,areas:m.areas,canOpen:!!(m.controls?.doors.length||m.controls?.drawers.length)};
