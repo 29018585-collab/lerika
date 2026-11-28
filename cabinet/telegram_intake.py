@@ -106,3 +106,20 @@ def handle_test_order(text, digest, key, db, lock, allocate_number, existing_num
         except Exception:
             pass
     return "Тестовая заявка " + number + " сохранена в закрытом кабинете. Это не производственный заказ." + (" Вложений: "+str(attachment_count)+"." if fresh else "")
+
+
+def pilot_keyboard(digest,db,lock,now=None):
+    now=int(time.time()) if now is None else now
+    with db() as c:
+        lock(c,82003)
+        purge_expired(c,now)
+        row=c.execute("SELECT code,brief FROM telegram_test_drafts WHERE chat_key=?",(digest,)).fetchone()
+    if row:
+        keyboard=[[{"text":"📋 Черновик"}]]
+        if row["brief"]:
+            keyboard.append([{"text":"✅ Отправить "+row["code"]}])
+        keyboard.append([{"text":"❌ Отменить "+row["code"]}])
+    else:
+        keyboard=[[{"text":"➕ Новая тестовая заявка"}]]
+    keyboard.append([{"text":"🌐 Инструменты сайта"}])
+    return {"keyboard":keyboard,"resize_keyboard":True,"is_persistent":True}
