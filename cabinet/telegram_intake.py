@@ -15,12 +15,15 @@ STAGE_LABELS = ("Исходное помещение","Замеры и эски�
 
 def status_text(c, digest, value=None):
     sql = """SELECT n.number,p.stage,p.status,d.created
-             FROM telegram_test_owners o
-             JOIN design_requests d ON d.id=o.request_id
+             FROM design_requests d
              JOIN request_numbers n ON n.request_id=d.id
              JOIN projects p ON p.id=d.id
-             WHERE o.chat_key=? AND p.published=0"""
-    params = [digest]
+             WHERE p.published=0 AND
+             (EXISTS (SELECT 1 FROM telegram_test_owners o WHERE o.request_id=d.id AND o.chat_key=?)
+              OR EXISTS (SELECT 1 FROM telegram_web_links l JOIN client_requests cr ON cr.client=l.client
+                         JOIN telegram_pilot_clients t ON t.chat_key=l.chat_key
+                         WHERE cr.project=d.id AND l.chat_key=?))"""
+    params = [digest,digest]
     if value is not None:
         if not re.fullmatch(r"L-[0-9]{6,12}",value):
             return "Введите номер в формате /status L-000001."
@@ -29,13 +32,13 @@ def status_text(c, digest, value=None):
     rows = c.execute(sql+" ORDER BY d.created DESC,n.number DESC LIMIT 10",tuple(params)).fetchall()
     if not rows:
         return "Заявка не найдена или недоступна." if value is not None else "У вас пока нет сохранённых тестовых заявок в новой системе истории."
-    lines = ["ТЕСТОВЫЕ ЗАЯВКИ · последние 10" if value is None else "СТАТУС ТЕСТОВОЙ ЗАЯВКИ"]
+    lines = ["МОИ ЗАЯВКИ · последние 10" if value is None else "СТАТУС ЗАЯВКИ"]
     for row in rows:
         stage = row["stage"]
         label = STAGE_LABELS[stage-1] if type(stage) is int and 1<=stage<=6 else "Уточняется"
         number = "L-"+str(row["number"]).zfill(6)
         lines.append(number+" · "+label+" · "+("Готово" if row["status"]=="ready" else "В работе"))
-    lines.append("Данные из закрытого кабинета. Это тестовые заявки, не производственные заказы.")
+    lines.append("Данные из закрытого кабинета. Заявки, созданные в тестовом боте, не являются производственными заказами.")
     return "\n\n".join(lines)
 
 def handle_test_order(text, digest, key, db, lock, allocate_number, existing_number, reserve_limits, notify, now=None):
