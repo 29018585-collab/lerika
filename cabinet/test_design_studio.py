@@ -170,6 +170,63 @@ class StudioTests(unittest.TestCase):
             self.assertEqual(c.execute("SELECT COUNT(*) AS n FROM client_order_messages").fetchone()["n"],0)
         self.assertEqual(self.client.get(url,base_url=ORIGIN).status_code,404)
 
+    def test_v570_order_history_and_private_stage_photos(self):
+        headers={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        owner={"name":"History QA","email":"history@example.invalid","password":"long-test-password-123","consent":True}
+        self.assertEqual(self.client.post("/api/client/register",json=owner,headers=headers,base_url=ORIGIN).status_code,201)
+        rid=self.submit(self.data()).json["id"]
+        url="/api/client/orders/"+rid+"/history"
+        admin_url="/api/projects/"+rid+"/history"
+        admin=app.test_client()
+        h={"X-CSRF":admin.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN).json["csrf"]}
+        old=self.client.get(url,base_url=ORIGIN).json
+        self.assertGreater(old["created"],0)
+        self.assertEqual(old["changes"],[])
+        self.assertEqual(old["stage"],1)
+        project=next(p for p in admin.get("/api/projects",base_url=ORIGIN).json["projects"] if p["id"]==rid)
+        def stage(n,status="work"):
+            return admin.put("/api/projects/"+rid,json={**project,"stage":n,"status":status,"published":False},headers=h,base_url=ORIGIN)
+        for n,status in [(2,"work"),(2,"work"),(4,"work"),(3,"work"),(6,"ready")]:
+            self.assertEqual(stage(n,status).status_code,200)
+        d=self.client.get(url,base_url=ORIGIN).json
+        self.assertEqual([(x["from_stage"],x["stage"]) for x in d["changes"]],[(1,2),(2,4),(4,3),(3,6)])
+        self.assertEqual([x["seq"] for x in d["changes"]],[1,2,3,4])
+        self.assertTrue(all(x["created"]>=old["created"] for x in d["changes"]))
+        self.assertEqual(d["status"],"ready")
+        self.assertEqual(d["changes"],admin.get(admin_url,base_url=ORIGIN).json["changes"])
+        picture=io.BytesIO()
+        from PIL import Image
+        Image.new("RGB",(32,24),(120,80,40)).save(picture,"PNG")
+        picture.seek(0)
+        photo=admin.post("/api/projects/"+rid+"/files",data={"stage":"4","file":(picture,"process.png")},headers=h,base_url=ORIGIN,content_type="multipart/form-data")
+        self.assertEqual(photo.status_code,201)
+        fid=photo.json["id"]
+        preview="/api/client/files/"+fid+"?preview=1"
+        share="/api/files/"+fid+"/client-share"
+        self.assertEqual(self.client.get(url,base_url=ORIGIN).json["photos"],[])
+        self.assertEqual(admin.get(admin_url,base_url=ORIGIN).json["photos"][0]["id"],fid)
+        self.assertEqual(self.client.get(preview,base_url=ORIGIN).status_code,404)
+        self.assertEqual(admin.put(share,json={"shared":True},headers=h,base_url=ORIGIN).status_code,200)
+        self.assertEqual(self.client.get(url,base_url=ORIGIN).json["photos"],[{"id":fid,"name":"process.png","stage":4}])
+        r=self.client.get(preview,base_url=ORIGIN)
+        self.assertEqual(r.status_code,200)
+        self.assertEqual(r.mimetype,"image/jpeg")
+        self.assertIn("no-store",r.headers["Cache-Control"])
+        self.assertEqual(Image.open(io.BytesIO(r.data)).size,(32,24))
+        other=app.test_client()
+        self.assertEqual(other.get(url,base_url=ORIGIN).status_code,401)
+        self.assertEqual(other.post("/api/client/register",json={**owner,"email":"other-history@example.invalid"},headers=headers,base_url=ORIGIN).status_code,201)
+        self.assertEqual(other.get(url,base_url=ORIGIN).status_code,404)
+        self.assertEqual(other.get(preview,base_url=ORIGIN).status_code,404)
+        self.assertEqual(other.get(admin_url,base_url=ORIGIN).status_code,401)
+        self.assertEqual(admin.put(share,json={"shared":False},headers=h,base_url=ORIGIN).status_code,200)
+        self.assertEqual(self.client.get(preview,base_url=ORIGIN).status_code,404)
+        self.assertEqual(self.client.get(url,base_url=ORIGIN).json["photos"],[])
+        self.assertEqual(admin.delete("/api/projects/"+rid,json={"confirm":True},headers=h,base_url=ORIGIN).status_code,200)
+        with db() as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) AS n FROM order_stage_history").fetchone()["n"],0)
+        self.assertEqual(self.client.get(url,base_url=ORIGIN).status_code,404)
+
     def test_v568_revision_bound_client_approval(self):
         headers={"Origin":ORIGIN,"X-Lerika-Client":"1"}
         owner={"name":"Approval QA","email":"approval@example.invalid","password":"long-test-password-123","consent":True}
