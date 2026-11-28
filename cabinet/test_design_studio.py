@@ -345,6 +345,45 @@ class StudioTests(unittest.TestCase):
                     self.assertIsNone(c.execute("SELECT file FROM client_file_shares WHERE file=?",(fid,)).fetchone())
                 self.assertEqual(stage(4).status_code,200)
                 self.assertEqual(sender.call_count,1)
+            # V5.67: alerts use only order number and event label, never message or file content.
+            code=web("issue").json["code"]
+            proof=tg("/link "+code)["text"].rsplit(" ",1)[-1]
+            self.assertTrue(web("confirm",proof=proof).json["ok"])
+            admin_messages="/api/projects/"+tg_project["id"]+"/messages"
+            client_messages="/api/client/orders/"+tg_project["id"]+"/messages"
+            tg("/notify_off")
+            with patch("telegram_core.bot_call",return_value={"message_id":1}) as sender:
+                self.assertEqual(admin.post(admin_messages,json={"text":"private disabled alert"},headers={"X-CSRF":csrf},base_url=ORIGIN).status_code,201)
+                sender.assert_not_called()
+            tg("/notify_on")
+            with patch("telegram_core.bot_call",return_value={"message_id":1}) as sender:
+                self.assertEqual(admin.post(admin_messages,json={"text":"private designer contents"},headers={"X-CSRF":csrf},base_url=ORIGIN).status_code,201)
+                self.assertEqual(sender.call_count,1)
+                payload=sender.call_args.args[2]
+                self.assertEqual(payload["chat_id"],123456)
+                self.assertIn(telegram_number,payload["text"])
+                self.assertIn("Новое сообщение от дизайнера",payload["text"])
+                self.assertNotIn("private designer contents",payload["text"])
+                self.assertEqual(admin.put(share_url,json={"shared":True},headers={"X-CSRF":csrf},base_url=ORIGIN).status_code,200)
+                self.assertEqual(sender.call_count,2)
+                payload=sender.call_args.args[2]
+                self.assertEqual(payload["chat_id"],123456)
+                self.assertIn("Новый документ",payload["text"])
+                self.assertNotIn("telegram-plan.pdf",payload["text"])
+                self.assertEqual(admin.put(share_url,json={"shared":True},headers={"X-CSRF":csrf},base_url=ORIGIN).status_code,200)
+                self.assertEqual(sender.call_count,2)
+                self.assertEqual(other.post(client_messages,json={"text":"forbidden"},headers=headers,base_url=ORIGIN).status_code,404)
+                self.assertEqual(sender.call_count,2)
+                self.assertEqual(self.client.post(client_messages,json={"text":"private client contents"},headers=headers,base_url=ORIGIN).status_code,201)
+                self.assertEqual(sender.call_count,3)
+                payload=sender.call_args.args[2]
+                self.assertEqual(payload["chat_id"],999999)
+                self.assertIn("Новое сообщение от клиента",payload["text"])
+                self.assertNotIn("private client contents",payload["text"])
+            with patch("telegram_core.bot_call",return_value=None):
+                self.assertEqual(admin.post(admin_messages,json={"text":"saved despite outage"},headers={"X-CSRF":csrf},base_url=ORIGIN).status_code,201)
+                self.assertIn("saved despite outage",[m["body"] for m in self.client.get(client_messages,base_url=ORIGIN).json["messages"]])
+            self.assertTrue(web("unlink").json["ok"])
             self.assertFalse(session()["telegram_linked"])
             self.assertEqual({o["number"] for o in session()["orders"]},{website_order})
             self.assertNotIn(website_order,tg("📦 Мои заявки")["text"])
