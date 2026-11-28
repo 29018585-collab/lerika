@@ -148,6 +148,7 @@ def pilot_keyboard(digest,db,lock,now=None):
         lock(c,82003)
         purge_expired(c,now)
         row=c.execute("SELECT code,brief FROM telegram_test_drafts WHERE chat_key=?",(digest,)).fetchone()
+        subscribed=c.execute("SELECT 1 FROM telegram_test_subscriptions WHERE chat_key=?",(digest,)).fetchone() is not None
     if row:
         keyboard=[[{"text":"📋 Черновик"}]]
         if row["brief"]:
@@ -156,4 +157,5 @@ def pilot_keyboard(digest,db,lock,now=None):
     else:
         keyboard=[[{"text":"➕ Новая тестовая заявка"}]]
     keyboard.append([{"text":"📦 Мои заявки"},{"text":"🌐 Инструменты сайта"}])
+    keyboard.append([{"text":"🔕 Выключить уведомления" if subscribed else "🔔 Включить уведомления"}])
     return {"keyboard":keyboard,"resize_keyboard":True,"is_persistent":True}
