@@ -70,5 +70,52 @@ assert.ok((await p.locator(".learning-lesson").allTextContents()).join(" ").incl
 assert.doesNotMatch((await p.locator(".learning-lesson").allTextContents()).join(" "),/К итоговому расчёту|введите их в соответствующие поля|Отправьте заявку с планом/);
 assert.equal(await p.getByText("AI Lab · дизайн-студия",{exact:true}).count(),0);
 console.log("PASS V5.23 BUG-017/018/029 guide, studio label and estimate source variants");
+
+ // V5.58: isolate apartment estimate and order payload from earlier room draft.
+ const apt=await b.newPage({viewport:{width:390,height:844},hasTouch:true,acceptDownloads:true});
+ const aptErrors=[];apt.on("pageerror",e=>aptErrors.push(e.message));apt.on("dialog",d=>d.accept());
+ await apt.goto(root+"#design-lab/plan");await apt.locator("#lp-view").waitFor({state:"visible"});
+ const fixture=await apt.evaluate(()=>{
+   const e=document.getElementById("lp-view").liveEdit.editor;
+   const err=e.applyApartmentDraft({height:2700,partition:160,corridorDepth:1500,corridorLength:0,doorWidth:900,rooms:[{name:"Кухня",w:4000,d:3500,side:"top"},{name:"Спальня",w:4000,d:3500,side:"bottom"}]});
+   if(err)throw Error(err);
+   const ids=e.apartment().rooms.filter(r=>r.id!==1).map(r=>r.id);
+   for(const id of ids){e.switchRoom(id);const err=e.add("wardrobe");if(err)throw Error(err);const a=LerikaRoomProject.snapshot().items[0];if(!LerikaRoomProject.setRoomMaterials(id,a.id,{bodyM:"ЛДСП",faceM:"ЛДСП"}))throw Error("materials");}
+   e.switchRoom(ids[1]);const chair=e.add("chair");if(chair)throw Error(chair);
+   return {ids,snapshot:LerikaRoomProject.apartmentSnapshot(),valid:LerikaRoomProject.apartmentValid()};
+ });
+ assert.ok(fixture.valid);assert.equal(fixture.snapshot.rooms.length,3);assert.equal(fixture.snapshot.rooms.flatMap(r=>r.plan.items).length,3);
+ assert.equal(fixture.snapshot.rooms[1].plan.items[0].id,fixture.snapshot.rooms[2].plan.items[0].id,"duplicate local furniture IDs expected");
+ await apt.locator("#lp-order-apartment").click();await apt.locator("#estimate-panel").waitFor({state:"visible"});
+ assert.equal(await apt.locator("#estimate-source").inputValue(),"apartment");
+ await apt.waitForFunction(()=>document.querySelector("#estimate-price-status").textContent.startsWith("Прайс от"));
+ assert.equal(await apt.locator(".estimate-line").count(),3);
+ assert.match(await apt.locator(".estimate-line").nth(0).locator("h3").textContent(),/Кухня/);
+ assert.match(await apt.locator(".estimate-line").nth(1).locator("h3").textContent(),/Спальня/);
+ assert.match(await apt.locator(".estimate-line").nth(2).textContent(),/не входит в мебельную смету/);
+ await apt.locator(".estimate-line").nth(1).getByLabel("Фасады",{exact:true}).selectOption("МДФ эмаль");
+ const after=await apt.evaluate(()=>LerikaRoomProject.apartmentSnapshot());
+ assert.equal(after.rooms[1].plan.items[0].faceM,"ЛДСП");assert.equal(after.rooms[2].plan.items[0].faceM,"МДФ эмаль");
+ const independent=await apt.evaluate(()=>{let total=0;for(const r of LerikaRoomProject.apartmentSnapshot().rooms)for(const a of r.plan.items){if(LerikaRoomPlanner.isAppliance(a.type))continue;for(const p of LerikaRoomPlanner.model(a).parts){const rate=p.role==="body"?1000:p.role==="front"?(a.faceM==="МДФ эмаль"?3500:2000):0;total+=p.a*p.b*p.qty/1e6*rate}}return total});
+ let dl=apt.waitForEvent("download");await apt.locator("#estimate-download").click();const aptCsv=fs.readFileSync(await (await dl).path(),"utf8");
+ assert.match(aptCsv,/Кухня/);assert.match(aptCsv,/Спальня/);assert.doesNotMatch(aptCsv,/Стул/);
+ assert.ok(aptCsv.trim().split("\n").at(-1).includes('"'+independent.toFixed(2).replace(".",",")+'"'),"independent apartment total");
+ let submitted=null;
+ await apt.route("**/api/order-requests",async route=>{const req=route.request();submitted={method:req.method(),headers:req.headers(),payload:req.postDataBuffer()};await route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({id:"test-apartment",number:"QA-APT"})})});
+ await apt.locator("#estimate-order").click();await apt.locator("#lo-panel").waitFor({state:"visible"});
+ assert.match(await apt.locator("#lo-files-status").textContent(),/4 \/ 10 файлов/);
+ for(const n of ["LERIKA-Project.txt","LERIKA-Estimate.csv","LERIKA-Apartment-Plan.png","LERIKA-Apartment-3D.png"])assert.ok((await apt.locator("#lo-list").textContent()).includes(n),n);
+ assert.equal(await apt.locator("#lo-source").inputValue(),"plan");assert.equal(submitted,null,"no automatic send");
+ await apt.locator("#lo-contact").fill("qa@example.test");await apt.locator("#lo-consent").check();await apt.locator("#lo-send").click();
+ await apt.waitForFunction(()=>document.body.textContent.includes("QA-APT"));
+ assert.equal(submitted.method,"POST");
+ const form=await new Response(submitted.payload,{headers:{"Content-Type":submitted.headers["content-type"]}}).formData();
+ assert.equal(form.get("source"),"plan");assert.equal(form.get("consent"),"yes");
+ const files=form.getAll("files");assert.equal(files.length,4);const byName=Object.fromEntries(files.map(f=>[f.name,f]));
+ const snapshot=JSON.parse(await byName["LERIKA-Project.txt"].text());assert.equal(snapshot.source,"apartment");assert.deepEqual(snapshot.room,after);assert.equal(snapshot.items.length,3);
+ assert.equal(await byName["LERIKA-Estimate.csv"].text(),aptCsv.replace(/^\uFEFF/,""));
+ for(const name of ["LERIKA-Apartment-Plan.png","LERIKA-Apartment-3D.png"]){const bytes=Buffer.from(await byName[name].arrayBuffer());assert.equal(bytes.subarray(0,8).toString("hex"),"89504e470d0a1a0a");assert.equal(bytes.readUInt32BE(16),1200);assert.equal(bytes.readUInt32BE(20),850);}
+ assert.deepEqual(aptErrors,[]);await apt.close();console.log("PASS V5.58 apartment estimate: three rooms, three objects, separate room IDs, independent total, CSV, full apartment JSON and two PNGs, explicit mock order submission");
+ 
 assert.deepEqual(errors,[]);console.log("PASS V5.19 saved geometry, no duplicate, shared room, exact published rates, missing/error rates, four order files, separate cut, 4 camera angles and VK");
 }finally{await b.close();server.close()}})().catch(e=>{console.error(e);server.close();process.exitCode=1});
