@@ -6,7 +6,7 @@ const server=http.createServer((req,res)=>{if(req.url==="/"){res.writeHead(200,{
 const page=await browser.newPage({viewport:{width:390,height:844},deviceScaleFactor:1,hasTouch:true,acceptDownloads:true});const errors=[];page.on("pageerror",e=>errors.push(e.message));let rejectDelete=false;page.on("dialog",d=>rejectDelete?d.dismiss():d.accept());
 await page.goto("http://127.0.0.1:"+server.address().port+"/#design-lab/plan",{waitUntil:"domcontentloaded"});
 await page.locator("#lp-view").waitFor({state:"visible"});
-assert.equal(await page.locator("#lp-type option").count(),12);
+assert.equal(await page.locator("#lp-type option").count(),19);
 assert.equal(await page.locator("#lp-body option").count(),68);
 assert.match(await page.locator("#lp-layout-status").textContent(),/не пересекаются/);
 assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),"mobile overflow");
@@ -121,7 +121,7 @@ await page.locator("#lp-demo").click();await page.locator("#lp-remove-view").cli
 await page.locator("#lp-clear").click();await page.locator("#lp-3d").click();await page.locator("#lz-open-lp-view").click();
 assert.equal(await page.locator('[data-lz-panel="rotation"]').count(),0);
 assert.ok(await page.locator("#lz-camera-left").isEnabled());assert.ok(await page.locator("#lz-add-item").isEnabled());
-await page.locator("#lz-add-item").tap();assert.equal(await page.locator("#lz-add-type option").count(),12);
+await page.locator("#lz-add-item").tap();assert.equal(await page.locator("#lz-add-type option").count(),19);
 await page.locator("#lz-add-type").selectOption("bed");await page.locator("#lz-sheet-body").getByRole("button",{name:"Добавить на план",exact:true}).first().tap();
 assert.equal(await page.locator("#lz-sheet").isVisible(),false);assert.equal(await page.locator("#lz-dialog").isVisible(),true);assert.equal((await page.evaluate(()=>LerikaRoomProject.snapshot())).items[0].type,"bed");
 assert.equal(await page.locator("#lz-item-pick").inputValue(),"1");
