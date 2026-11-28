@@ -255,9 +255,9 @@ def qwen_connection_test():
     key=os.environ.get("LERIKA_GROQ_API_KEY","").strip()
     if not key:
         return False,"Ключ Groq не настроен."
-    payload={"model":LERIKA_AI_MODEL,"messages":[{"role":"user","content":"Reply with exactly LERIKA_OK, no other text."}],"reasoning_effort":"none","temperature":0.2,"max_completion_tokens":64}
+    payload={"model":LERIKA_AI_MODEL,"messages":[{"role":"user","content":"Reply with exactly LERIKA_OK, no other text."}],"max_completion_tokens":64}
     try:
-        req=Request("https://api.groq.com/openai/v1/chat/completions",data=json.dumps(payload).encode("utf-8"),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
+        req=Request("https://api.groq.com/openai/v1/chat/completions",data=json.dumps(payload).encode("utf-8"),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json","Accept":"application/json","User-Agent":"LERIKA-Groq-Diagnostic/1.0"},method="POST")
         with urlopen(req,timeout=12) as res:
             data=json.loads(res.read(65536))
         answer=data["choices"][0]["message"]["content"]
@@ -265,7 +265,11 @@ def qwen_connection_test():
             return True,"PASS: Qwen ответил LERIKA_OK."
         return False,"Ответ от API получен, но контрольная фраза не совпала."
     except HTTPError as exc:
-        return False,groq_diagnostic_error(exc)
+        content_type=exc.headers.get("Content-Type","").lower() if exc.headers else ""
+        message=groq_diagnostic_error(exc)
+        if "text/html" in content_type:
+            message+=" Ответ HTML, а не стандартный JSON API."
+        return False,message
     except Exception:
         return False,"Не удалось получить корректный ответ от Groq."
 
