@@ -30,7 +30,7 @@ if not SETUP_REQUIRED and (len(KEY)<32 or not PASSWORD.startswith(("scrypt:","pb
     raise RuntimeError("Set SESSION_SECRET (32+ random characters) and ADMIN_PASSWORD_HASH")
 app=Flask(__name__)
 app.config.update(SECRET_KEY=KEY if not SETUP_REQUIRED else None,SESSION_COOKIE_HTTPONLY=True,SESSION_COOKIE_SECURE=True,SESSION_COOKIE_SAMESITE="Strict",MAX_CONTENT_LENGTH=16*1024*1024)
-REQUEST_SOURCES={"project":"Коллекция изделий","3d":"3D-конструктор","ai":"Дизайн-студия","config":"Конфигуратор","plan":"Планировщик помещения","engineering":"Инженерная лаборатория","order":"Прямой заказ","legacy":"Источник не указан","support":"Поддержка","partner":"Сотрудничество"}
+REQUEST_SOURCES={"project":"Коллекция изделий","3d":"3D-конструктор","ai":"Дизайн-студия","config":"Конфигуратор","plan":"Планировщик помещения","engineering":"Инженерная лаборатория","order":"Прямой заказ","legacy":"Источник не указан","support":"Поддержка","partner":"Сотрудничество","telegram":"Telegram"}
 CATEGORIES=["Кухни","Шкафы","Прихожие","Спальни","Детские","Гостиные","Гардеробные","Нестандартные системы хранения"]
 STAGES=["Исходное помещение","Замеры и эскизы","3D-проект","Изготовление","Монтаж","Готовая мебель"]
 ORIGIN="https://29018585-collab.github.io"
@@ -118,11 +118,20 @@ if not SETUP_REQUIRED:
     CREATE TABLE IF NOT EXISTS covers(category INTEGER PRIMARY KEY CHECK(category BETWEEN 1 AND 8), file TEXT NOT NULL REFERENCES files(id));
     CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY CHECK(id=1), count INTEGER NOT NULL, since INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS design_requests(id TEXT PRIMARY KEY, created INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS telegram_test_drafts(chat_key TEXT PRIMARY KEY, code TEXT NOT NULL, brief TEXT NOT NULL, expires INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS telegram_test_files(chat_key TEXT NOT NULL REFERENCES telegram_test_drafts(chat_key) ON DELETE CASCADE, code TEXT NOT NULL, checksum TEXT NOT NULL, name TEXT NOT NULL, data BLOB NOT NULL, PRIMARY KEY(chat_key,code,checksum));
     CREATE TABLE IF NOT EXISTS request_numbers(number INTEGER PRIMARY KEY, request_id TEXT NOT NULL UNIQUE REFERENCES design_requests(id));
+    CREATE TABLE IF NOT EXISTS telegram_test_owners(request_id TEXT PRIMARY KEY REFERENCES design_requests(id) ON DELETE CASCADE, chat_key TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS telegram_test_owners_chat ON telegram_test_owners(chat_key);
+    CREATE TABLE IF NOT EXISTS telegram_test_subscriptions(chat_key TEXT PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS telegram_pilot_clients(chat_key TEXT PRIMARY KEY, created INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS telegram_pilot_pending(chat_key TEXT PRIMARY KEY, expires INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS request_sequence(id INTEGER PRIMARY KEY CHECK(id=1), last_number INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS design_briefs(project TEXT PRIMARY KEY REFERENCES projects(id), brief TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS clients(id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, password_hash TEXT NOT NULL, created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS client_requests(project TEXT PRIMARY KEY REFERENCES projects(id), client TEXT NOT NULL REFERENCES clients(id));
+    CREATE TABLE IF NOT EXISTS telegram_web_links(client TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE, chat_key TEXT UNIQUE NOT NULL, created INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS telegram_web_pending(client TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE, token_hash TEXT UNIQUE NOT NULL, expires INTEGER NOT NULL, chat_key TEXT, proof_hash TEXT);
     CREATE TABLE IF NOT EXISTS client_limits(action TEXT PRIMARY KEY, count INTEGER NOT NULL, since INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS price_catalog(id INTEGER PRIMARY KEY CHECK(id=1), entries TEXT NOT NULL, updated INTEGER NOT NULL);
     """)
@@ -216,14 +225,48 @@ def notify_telegram_order(number,source,room,attachment_count):
 
 LERIKA_AI_MODEL="qwen/qwen3.8-27b"
 
+def groq_diagnostic_error(exc):
+    # Map only known provider codes to fixed strings; never return raw error data.
+    status=exc.code
+    code=None
+    kind=None
+    try:
+        payload=json.loads(exc.read(8192))
+        err=payload.get("error")
+        if isinstance(err,dict):
+            code=err.get("code")
+            kind=err.get("type")
+    except Exception:
+        pass
+    prefix="Groq HTTP "+str(status)+". "
+    if status==403:
+        if code=="model_permission_blocked_org":
+            return prefix+"Модель запрещена на уровне организации Groq (model_permission_blocked_org)."
+        if code=="model_permission_blocked_project":
+            return prefix+"Модель запрещена на уровне проекта Groq (model_permission_blocked_project)."
+        if kind=="permissions_error":
+            return prefix+"Groq сообщает об ограничении разрешений."
+        if code=="unsupported_country_region_territory":
+            return prefix+"Groq сообщает об ограничении региона."
+        return prefix+"Причина не распознана. Проверьте разрешения модели и доступ к API в Groq."
+    if status==401:
+        return prefix+"Ключ не принят сервисом."
+    if status==429:
+        return prefix+"Достигнут лимит Groq."
+    if status==404:
+        return prefix+"Модель или ресурс недоступны."
+    if status==400:
+        return prefix+"Groq отклонил параметры запроса."
+    return prefix+"Запрос не выполнен."
+
 def qwen_connection_test():
     from urllib.error import HTTPError
     key=os.environ.get("LERIKA_GROQ_API_KEY","").strip()
     if not key:
         return False,"Ключ Groq не настроен."
-    payload={"model":LERIKA_AI_MODEL,"messages":[{"role":"user","content":"Reply with exactly LERIKA_OK, no other text."}],"reasoning_effort":"none","temperature":0.2,"max_completion_tokens":64}
+    payload={"model":LERIKA_AI_MODEL,"messages":[{"role":"user","content":"Reply with exactly LERIKA_OK, no other text."}],"max_completion_tokens":64}
     try:
-        req=Request("https://api.groq.com/openai/v1/chat/completions",data=json.dumps(payload).encode("utf-8"),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
+        req=Request("https://api.groq.com/openai/v1/chat/completions",data=json.dumps(payload).encode("utf-8"),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json","Accept":"application/json","User-Agent":"LERIKA-Groq-Diagnostic/1.0"},method="POST")
         with urlopen(req,timeout=12) as res:
             data=json.loads(res.read(65536))
         answer=data["choices"][0]["message"]["content"]
@@ -231,10 +274,214 @@ def qwen_connection_test():
             return True,"PASS: Qwen ответил LERIKA_OK."
         return False,"Ответ от API получен, но контрольная фраза не совпала."
     except HTTPError as exc:
-        # Never disclose provider error bodies or request credentials.
-        return False,"Groq HTTP "+str(exc.code)+"."
+        content_type=exc.headers.get("Content-Type","").lower() if exc.headers else ""
+        message=groq_diagnostic_error(exc)
+        if "text/html" in content_type:
+            message+=" Ответ HTML, а не стандартный JSON API."
+        return False,message
     except Exception:
         return False,"Не удалось получить корректный ответ от Groq."
+
+@app.get("/api/admin/ai")
+@admin
+def ai_admin_status():
+    return jsonify(model=LERIKA_AI_MODEL,configured=bool(os.environ.get("LERIKA_GROQ_API_KEY","").strip()),telegram_configured=bool(os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip() and os.environ.get("LERIKA_TELEGRAM_ADMIN_CHAT_ID","").strip()),rag=False,memory=False,core_version="1.0")
+
+@app.post("/api/admin/telegram/webhook")
+@admin
+def telegram_admin_webhook():
+    from telegram_core import PATH,bot_call,secret_for
+    if not valid_public_origin():
+        abort(403)
+    body=request.get_json(silent=True)
+    if not isinstance(body,dict) or body.get("action") not in ("status","activate","disable"):
+        abort(400)
+    token=os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip()
+    if not token or len(KEY)<32:
+        return jsonify(ok=False,message="Настройки Telegram неполные.")
+    reserve_limits([("lerika-tg-config-minute",3,60)])
+    target=PUBLIC_ORIGIN+PATH
+    info=bot_call(token,"getWebhookInfo")
+    if not isinstance(info,dict):
+        return jsonify(ok=False,message="Не удалось проверить Telegram API.")
+    current=info.get("url","")
+    if current and current!=target:
+        return jsonify(ok=False,message="У бота уже настроен другой webhook. Изменения не внесены.")
+    if body["action"]=="activate":
+        ok=bot_call(token,"setWebhook",{"url":target,"secret_token":secret_for(KEY),"allowed_updates":["message"],"max_connections":1,"drop_pending_updates":False})
+        if ok is not True:
+            return jsonify(ok=False,message="Telegram не подтвердил активацию.")
+    elif body["action"]=="disable" and current==target:
+        if bot_call(token,"deleteWebhook",{"drop_pending_updates":False}) is not True:
+            return jsonify(ok=False,message="Telegram не подтвердил отключение.")
+    info=bot_call(token,"getWebhookInfo")
+    if not isinstance(info,dict):
+        return jsonify(ok=False,message="Действие отправлено, итоговый статус не подтверждён.")
+    active=info.get("url")==target
+    pending=info.get("pending_update_count",0)
+    return jsonify(ok=True,active=active,message=("Webhook подключён." if active else "Webhook отключён.")+" В очереди: "+str(pending if type(pending) is int else 0)+".",delivery_warning=bool(info.get("last_error_date")))
+
+@app.post("/api/telegram/webhook")
+def telegram_webhook():
+    from telegram_core import secret_for,parse_update,answer_message
+    from werkzeug.exceptions import TooManyRequests
+    supplied=request.headers.get("X-Telegram-Bot-Api-Secret-Token","")
+    if len(KEY)<32 or not secrets.compare_digest(supplied,secret_for(KEY)):
+        abort(403)
+    if not request.is_json or request.content_length is None or request.content_length>65536:
+        abort(400)
+    parsed=parse_update(request.get_json(silent=True))
+    if parsed is None:
+        return jsonify(ok=True)
+    uid,cid,text=parsed
+    # Ignore stale deliveries rather than reply to an old conversation.
+    message=request.get_json()["message"]
+    stamp=message.get("date")
+    if type(stamp) is not int or not 0<=int(time.time())-stamp<=900:
+        return jsonify(ok=True)
+    # Store only hashed chat identifiers and update IDs in the existing rate-limit table.
+    # A Telegram retry is acknowledged without a repeated reply.
+    digest=hmac.new(KEY.encode(),str(cid).encode(),hashlib.sha256).hexdigest()[:32]
+    is_admin=str(cid)==os.environ.get("LERIKA_TELEGRAM_ADMIN_CHAT_ID","").strip()
+    from telegram_client_pilot import allowed,enrolled,registration,registration_keyboard,JOIN,LEAVE
+    is_invited=not is_admin and allowed(cid,os.environ.get("LERIKA_TG_CLIENT_PILOT",""),os.environ.get("LERIKA_TG_PILOT_CHAT_IDS",""))
+    try:
+        # A ten-photo album produces ten individual Telegram updates.
+        reserve_limits([("lerika-tg-update-"+str(uid),1,86400),("lerika-tg-global-minute",30,60),("lerika-tg-chat-"+digest,16 if is_admin or is_invited else 6,60)])
+    except TooManyRequests:
+        return jsonify(ok=True)
+    def classify_preview(query):
+        from ai_core import classify,fallback
+        key=os.environ.get("LERIKA_GROQ_API_KEY","").strip()
+        if not key:
+            return fallback()
+        try:
+            reserve_limits([("lerika-tg-ai-day",10,86400),("lerika-tg-ai-minute",1,60)])
+        except TooManyRequests:
+            return fallback()
+        return classify(query,key,LERIKA_AI_MODEL)
+    pilot=None
+    registered=False
+    registration_reply=None
+    if is_invited:
+        try:
+            registration_reply=registration(text,digest,db,lock)
+            with db() as c:
+                registered=enrolled(c,digest)
+        except Exception:
+            app.logger.warning("Telegram client pilot registration unavailable")
+            return jsonify(method="sendMessage",chat_id=cid,text="Тестовая регистрация временно недоступна.")
+        if not registered and text=="🌐 Инструменты сайта":
+            answer,markup=answer_message(text,PUBLIC_ORIGIN,False,None)
+            return jsonify(method="sendMessage",chat_id=cid,text=answer,reply_markup=markup)
+        if registration_reply is not None or not registered:
+            from telegram_intake import pilot_keyboard
+            markup=pilot_keyboard(digest,db,lock,client=True) if registered else registration_keyboard(show_consent=text==JOIN)
+            return jsonify(method="sendMessage",chat_id=cid,text=registration_reply or "Закрытый тест ЛериКа. Для доступа зарегистрируйтесь.",reply_markup=markup)
+    if is_admin or registered:
+        from telegram_intake import handle_test_order,pilot_keyboard
+        from telegram_files import receive_attachment
+        from telegram_stage_notifications import preference
+        try:
+            if registered and isinstance(text,str) and text.startswith("/link "):
+                from telegram_web_link import claim
+                reserve_limits([("lerika-tg-link-"+digest,8,900)])
+                with db() as c:
+                    lock(c,82003)
+                    proof=claim(c,digest,KEY,text[6:].strip(),int(time.time()))
+                pilot=("Введите на сайте второй код подтверждения: "+proof) if proof else "Код недействителен, истёк или уже использован. Создайте новый на сайте."
+            else:
+                pilot=preference(text,digest,db,lock)
+            if pilot is None:
+                pilot=receive_attachment(message,digest,os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip(),db,lock)
+            if pilot is None:
+                pilot=handle_test_order(text,digest,KEY,db,lock,allocate_number,existing_number,reserve_limits,notify_telegram_order)
+        except TooManyRequests:
+            pilot="Достигнут лимит тестовых заявок. Попробуйте позже."
+        except Exception:
+            app.logger.warning("Telegram test order could not be completed")
+            pilot="Не удалось завершить действие. Проверьте кабинет; при необходимости повторите команду подтверждения."
+    if pilot is not None:
+        answer,markup=pilot,None
+    else:
+        answer,markup=answer_message(text,PUBLIC_ORIGIN,is_admin,classify_preview if is_admin else None)
+    if (is_admin or registered) and text != "🌐 Инструменты сайта" and (pilot is not None or not (is_admin and isinstance(text,str) and text.startswith("/ai "))):
+        try:
+            markup=pilot_keyboard(digest,db,lock,client=registered)
+            if pilot is None:
+                answer="ЛериКа · Закрытый тест. Используйте кнопки для создания и отправки вымышленных заявок. Реальные клиентские данные пока не принимаются."
+        except Exception:
+            app.logger.warning("Telegram pilot keyboard unavailable")
+    # Telegram can execute a Bot API method from the webhook response.
+    # This avoids another outbound request and never exposes the bot token.
+    result={"method":"sendMessage","chat_id":cid,"text":answer,"link_preview_options":{"is_disabled":True}}
+    if markup:
+        result["reply_markup"]=markup
+    return jsonify(result)
+
+@app.post("/api/admin/ai/assistant")
+@admin
+def ai_admin_assistant():
+    from ai_core import classify
+    if not valid_public_origin():
+        abort(403)
+    if not request.is_json:
+        abort(415)
+    if request.content_length is None or request.content_length>8192:
+        abort(413)
+    body=request.get_json(silent=True)
+    if not isinstance(body,dict) or set(body)!={"text","synthetic"} or body.get("synthetic") is not True:
+        abort(400)
+    query=body.get("text")
+    if not isinstance(query,str) or not 1<=len(query.strip())<=800:
+        abort(400)
+    key=os.environ.get("LERIKA_GROQ_API_KEY","").strip()
+    if not key:
+        return jsonify(ok=False,message="Ключ Groq не настроен.")
+    reserve_limits([("lerika-ai-core-day",15,86400),("lerika-ai-core-minute",2,60)])
+    return jsonify(classify(query,key,LERIKA_AI_MODEL))
+
+@app.post("/api/admin/ai/access")
+@admin
+def ai_admin_access():
+    from urllib.error import HTTPError
+    if not valid_public_origin():
+        abort(403)
+    key=os.environ.get("LERIKA_GROQ_API_KEY","").strip()
+    if not key:
+        return jsonify(ok=False,message="Ключ Groq не настроен.")
+    reserve_limits([("lerika-ai-access-day",5,86400),("lerika-ai-access-minute",1,60)])
+    try:
+        req=Request("https://api.groq.com/openai/v1/models",headers={"Authorization":"Bearer "+key,"Accept":"application/json","User-Agent":"LERIKA-Groq-Diagnostic/1.0"},method="GET")
+        with urlopen(req,timeout=10) as res:
+            data=json.loads(res.read(262144))
+        models=data.get("data")
+        if not isinstance(models,list):
+            return jsonify(ok=False,message="Groq вернул неожиданный формат списка моделей.")
+        available=any(isinstance(m,dict) and m.get("id")==LERIKA_AI_MODEL for m in models)
+        return jsonify(ok=available,message="API Groq доступен. "+("Qwen присутствует в списке моделей." if available else "Qwen отсутствует в списке моделей."))
+    except HTTPError as exc:
+        content_type=exc.headers.get("Content-Type","").lower() if exc.headers else ""
+        edge=bool(exc.headers and exc.headers.get("cf-ray"))
+        result=groq_diagnostic_error(exc)
+        if "text/html" in content_type:
+            result+=" Ответ HTML, а не стандартный JSON API."
+        if edge:
+            result+=" Присутствует заголовок Cloudflare (сам по себе не доказывает блокировку)."
+        return jsonify(ok=False,message="Список моделей: "+result)
+    except Exception:
+        return jsonify(ok=False,message="Не удалось получить список моделей Groq.")
+
+@app.post("/api/admin/ai/test")
+@admin
+def ai_admin_test():
+    if not valid_public_origin():
+        abort(403)
+    if not os.environ.get("LERIKA_GROQ_API_KEY","").strip():
+        return jsonify(ok=False,message="Ключ Groq не настроен.")
+    reserve_limits([("lerika-ai-test-global-day",3,86400),("lerika-ai-test-global-minute",1,60)])
+    ok,message=qwen_connection_test()
+    return jsonify(ok=ok,message=message)
 
 @app.route("/cabinet/ai-test",methods=["GET","POST"])
 @admin
@@ -487,6 +734,33 @@ def client_logout():
     session.pop("client",None);session.pop("client_login",None)
     return jsonify(ok=True)
 
+@app.post("/api/client/telegram-link")
+def client_telegram_link():
+    from telegram_web_link import issue,confirm,unlink,active_digests
+    client_origin()
+    cid=client_id()
+    if not cid: abort(401)
+    body=request.get_json(silent=True)
+    if not isinstance(body,dict) or body.get("action") not in ("issue","confirm","unlink"): abort(400)
+    action=body["action"]
+    allowed=active_digests(KEY,os.environ.get("LERIKA_TG_CLIENT_PILOT",""),os.environ.get("LERIKA_TG_PILOT_CHAT_IDS",""))
+    if action!="unlink" and not allowed: abort(403)
+    reserve_limits([("lerika-web-link-"+cid,12,900)])
+    with db() as c:
+        lock(c,82003)
+        if not c.execute("SELECT id FROM clients WHERE id=?",(cid,)).fetchone(): abort(401)
+        if action=="unlink":
+            unlink(c,cid)
+            return jsonify(ok=True)
+        if action=="issue":
+            token=issue(c,cid,KEY,int(time.time()))
+            if token is None: return jsonify(ok=False,message="Аккаунт уже связан с Telegram.")
+            return jsonify(ok=True,code=token,expires_in=600)
+        proof=body.get("proof")
+        if not isinstance(proof,str) or not confirm(c,cid,KEY,proof.strip(),int(time.time()),allowed):
+            return jsonify(ok=False,message="Код недействителен или привязка недоступна.")
+        return jsonify(ok=True)
+
 @app.get("/api/client/session")
 def client_session():
     cid=client_id()
@@ -495,9 +769,18 @@ def client_session():
         row=c.execute("SELECT name,email FROM clients WHERE id=?",(cid,)).fetchone()
         if not row: abort(401)
         orders=[dict(x) for x in c.execute("SELECT p.id,p.title,p.stage,p.status,r.created,n.number FROM client_requests cr JOIN projects p ON p.id=cr.project JOIN design_requests r ON r.id=p.id LEFT JOIN request_numbers n ON n.request_id=r.id WHERE cr.client=? ORDER BY r.created DESC",(cid,))]
+        from telegram_web_link import active_digests
+        allowed=active_digests(KEY,os.environ.get("LERIKA_TG_CLIENT_PILOT",""),os.environ.get("LERIKA_TG_PILOT_CHAT_IDS",""))
+        link=c.execute("SELECT l.chat_key FROM telegram_web_links l JOIN telegram_pilot_clients t ON t.chat_key=l.chat_key WHERE l.client=?",(cid,)).fetchone()
+        linked=bool(link and link["chat_key"] in allowed)
+        if linked:
+            extra=[dict(x) for x in c.execute("SELECT p.id,p.title,p.stage,p.status,r.created,n.number FROM telegram_test_owners o JOIN projects p ON p.id=o.request_id JOIN design_requests r ON r.id=p.id JOIN request_numbers n ON n.request_id=r.id WHERE o.chat_key=? AND p.published=0 ORDER BY r.created DESC",(link["chat_key"],))]
+            known={x["id"] for x in orders}
+            orders.extend(x for x in extra if x["id"] not in known)
+            orders.sort(key=lambda x:x["created"],reverse=True)
     for order in orders:
         order["number"]=request_number(order["number"]) if order["number"] is not None else order["id"][:12]
-    return jsonify(name=row["name"],email=row["email"],orders=orders)
+    return jsonify(name=row["name"],email=row["email"],orders=orders,telegram_link_available=bool(allowed),telegram_linked=linked,telegram_link_exists=bool(link))
 
 @app.get("/api/clients")
 @admin
@@ -753,12 +1036,26 @@ def create_project():
 @app.put("/api/projects/<p>")
 @admin
 def edit_project(p):
+    from telegram_stage_notifications import event_for_edit,deliver_event
+    from telegram_client_pilot import notification_chat
+    from telegram_core import bot_call
     rec=project_record(p)
+    event=None
+    recipient=""
     with db() as c:
         lock(c,82003)
         if rec[5] and c.execute("SELECT id FROM design_requests WHERE id=?",(p,)).fetchone(): abort(403)
+        old=c.execute("SELECT stage,status FROM projects WHERE id=?",(p,)).fetchone()
         if not c.execute("UPDATE projects SET category=?,title=?,description=?,stage=?,status=?,published=?,updated=? WHERE id=?",rec).rowcount: abort(404)
         c.execute("DELETE FROM covers WHERE file IN (SELECT id FROM files WHERE project=?) AND category<>?",(p,rec[0]))
+        event=event_for_edit(c,p,old,rec[3],rec[4])
+        recipient=notification_chat(c,event,KEY,os.environ.get("LERIKA_TELEGRAM_ADMIN_CHAT_ID","").strip(),os.environ.get("LERIKA_TG_CLIENT_PILOT",""),os.environ.get("LERIKA_TG_PILOT_CHAT_IDS",""))
+    if event is not None and recipient:
+        try:
+            if not deliver_event(event,KEY,recipient,os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip(),bot_call):
+                app.logger.warning("Telegram test stage notification not delivered")
+        except Exception:
+            app.logger.warning("Telegram test stage notification failed")
     return jsonify(ok=True)
 
 @app.post("/api/projects/<p>/files")
