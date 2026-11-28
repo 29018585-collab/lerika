@@ -52,4 +52,4 @@ jobs:
           check /public/portfolio 200
           check /api/projects 401
           check /api/client/session 401
-          echo 'PASS: post-V5.23.1 live deployment read-only smoke; no customer submissions or authenticated writes'
+          echo 'PASS: confirmed post-V5.23.1 live deployment read-only smoke; no customer submissions or authenticated writes'
