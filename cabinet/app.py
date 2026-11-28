@@ -868,7 +868,7 @@ def project_approval(project,designer=False):
         if request.method=="POST":
             if designer:
                 files=approval_manifest(c,project,owner)
-                if not files: abort(409)
+                if not files or d.get("file_ids")!=[f["id"] for f in files]: abort(409)
                 if len(rows)>=100: abort(413)
                 revision=rows[0]["revision"]+1 if rows else 1
                 c.execute("UPDATE client_project_approvals SET state='superseded' WHERE project=? AND client=? AND state='pending'",(project,owner))
