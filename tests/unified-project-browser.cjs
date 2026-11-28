@@ -1,7 +1,7 @@
 "use strict";
 const {chromium}=require("playwright"),assert=require("node:assert/strict"),fs=require("node:fs"),http=require("node:http");
-const html=fs.readFileSync("index.html");let priceMode="full";
-const server=http.createServer((req,res)=>{if(req.url==="/"){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(html)}else if(req.url==="/public/prices"){if(priceMode==="error"){res.writeHead(503);res.end();return}res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify({updated:1760000000,entries:priceMode==="empty"?[]:[{group:"корпус",material:"ЛДСП",price:1000},{group:"фасады",material:"ЛДСП",price:2000},{group:"фасады",material:"МДФ эмаль",price:3500}]}))}else{res.writeHead(404);res.end()}});
+const html=fs.readFileSync("index.html");let priceMode="full",submitted=null;
+const server=http.createServer((req,res)=>{if(req.url==="/"){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});res.end(html)}else if(req.url==="/api/order-requests"&&req.method==="POST"){const chunks=[];req.on("data",c=>chunks.push(c));req.on("end",()=>{submitted={method:req.method,headers:req.headers,payload:Buffer.concat(chunks)};res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify({id:"test-apartment",number:"QA-APT"}))})}else if(req.url==="/public/prices"){if(priceMode==="error"){res.writeHead(503);res.end();return}res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify({updated:1760000000,entries:priceMode==="empty"?[]:[{group:"корпус",material:"ЛДСП",price:1000},{group:"фасады",material:"ЛДСП",price:2000},{group:"фасады",material:"МДФ эмаль",price:3500}]}))}else{res.writeHead(404);res.end()}});
 (async()=>{await new Promise(r=>server.listen(0,"127.0.0.1",r));const b=await chromium.launch({headless:true});try{
 const p=await b.newPage({viewport:{width:390,height:844},hasTouch:true,acceptDownloads:true});const errors=[];p.on("pageerror",e=>errors.push(e.message));p.on("dialog",d=>d.accept());
 const root="http://127.0.0.1:"+server.address().port+"/";
@@ -100,8 +100,8 @@ console.log("PASS V5.23 BUG-017/018/029 guide, studio label and estimate source 
  let dl=apt.waitForEvent("download");await apt.locator("#estimate-download").click();const aptCsv=fs.readFileSync(await (await dl).path(),"utf8");
  assert.match(aptCsv,/Кухня/);assert.match(aptCsv,/Спальня/);assert.doesNotMatch(aptCsv,/Стул/);
  assert.ok(aptCsv.trim().split("\n").at(-1).includes('"'+independent.toFixed(2).replace(".",",")+'"'),"independent apartment total");
- let submitted=null;
- await apt.route("**/api/order-requests",async route=>{const req=route.request();submitted={method:req.method(),headers:req.headers(),payload:req.postDataBuffer()};await route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({id:"test-apartment",number:"QA-APT"})})});
+ submitted=null;
+
  await apt.locator("#estimate-order").click();await apt.locator("#lo-panel").waitFor({state:"visible"});
  assert.match(await apt.locator("#lo-files-status").textContent(),/4 \/ 10 файлов/);
  for(const n of ["LERIKA-Project.txt","LERIKA-Estimate.csv","LERIKA-Apartment-Plan.png","LERIKA-Apartment-3D.png"])assert.ok((await apt.locator("#lo-list").textContent()).includes(n),n);
