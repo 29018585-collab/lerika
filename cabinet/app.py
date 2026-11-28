@@ -216,6 +216,40 @@ def notify_telegram_order(number,source,room,attachment_count):
 
 LERIKA_AI_MODEL="qwen/qwen3.8-27b"
 
+def groq_diagnostic_error(exc):
+    # Map only known provider codes to fixed strings; never return raw error data.
+    status=exc.code
+    code=None
+    kind=None
+    try:
+        payload=json.loads(exc.read(8192))
+        err=payload.get("error")
+        if isinstance(err,dict):
+            code=err.get("code")
+            kind=err.get("type")
+    except Exception:
+        pass
+    prefix="Groq HTTP "+str(status)+". "
+    if status==403:
+        if code=="model_permission_blocked_org":
+            return prefix+"Модель запрещена на уровне организации Groq (model_permission_blocked_org)."
+        if code=="model_permission_blocked_project":
+            return prefix+"Модель запрещена на уровне проекта Groq (model_permission_blocked_project)."
+        if kind=="permissions_error":
+            return prefix+"Groq сообщает об ограничении разрешений."
+        if code=="unsupported_country_region_territory":
+            return prefix+"Groq сообщает об ограничении региона."
+        return prefix+"Причина не распознана. Проверьте разрешения модели и доступ к API в Groq."
+    if status==401:
+        return prefix+"Ключ не принят сервисом."
+    if status==429:
+        return prefix+"Достигнут лимит Groq."
+    if status==404:
+        return prefix+"Модель или ресурс недоступны."
+    if status==400:
+        return prefix+"Groq отклонил параметры запроса."
+    return prefix+"Запрос не выполнен."
+
 def qwen_connection_test():
     from urllib.error import HTTPError
     key=os.environ.get("LERIKA_GROQ_API_KEY","").strip()
@@ -231,8 +265,7 @@ def qwen_connection_test():
             return True,"PASS: Qwen ответил LERIKA_OK."
         return False,"Ответ от API получен, но контрольная фраза не совпала."
     except HTTPError as exc:
-        # Never disclose provider error bodies or request credentials.
-        return False,"Groq HTTP "+str(exc.code)+"."
+        return False,groq_diagnostic_error(exc)
     except Exception:
         return False,"Не удалось получить корректный ответ от Groq."
 
