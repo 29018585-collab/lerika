@@ -130,6 +130,8 @@ if not SETUP_REQUIRED:
     CREATE TABLE IF NOT EXISTS design_briefs(project TEXT PRIMARY KEY REFERENCES projects(id), brief TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS clients(id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, password_hash TEXT NOT NULL, created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS client_requests(project TEXT PRIMARY KEY REFERENCES projects(id), client TEXT NOT NULL REFERENCES clients(id));
+    CREATE TABLE IF NOT EXISTS telegram_web_links(client TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE, chat_key TEXT UNIQUE NOT NULL, created INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS telegram_web_pending(client TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE, token_hash TEXT UNIQUE NOT NULL, expires INTEGER NOT NULL, chat_key TEXT, proof_hash TEXT);
     CREATE TABLE IF NOT EXISTS client_limits(action TEXT PRIMARY KEY, count INTEGER NOT NULL, since INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS price_catalog(id INTEGER PRIMARY KEY CHECK(id=1), entries TEXT NOT NULL, updated INTEGER NOT NULL);
     """)
@@ -381,7 +383,15 @@ def telegram_webhook():
         from telegram_files import receive_attachment
         from telegram_stage_notifications import preference
         try:
-            pilot=preference(text,digest,db,lock)
+            if registered and isinstance(text,str) and text.startswith("/link "):
+                from telegram_web_link import claim
+                reserve_limits([("lerika-tg-link-"+digest,8,900)])
+                with db() as c:
+                    lock(c,82003)
+                    proof=claim(c,digest,KEY,text[6:].strip(),int(time.time()))
+                pilot=("Введите на сайте второй код подтверждения: "+proof) if proof else "Код недействителен, истёк или уже использован. Создайте новый на сайте."
+            else:
+                pilot=preference(text,digest,db,lock)
             if pilot is None:
                 pilot=receive_attachment(message,digest,os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip(),db,lock)
             if pilot is None:
@@ -724,6 +734,33 @@ def client_logout():
     session.pop("client",None);session.pop("client_login",None)
     return jsonify(ok=True)
 
+@app.post("/api/client/telegram-link")
+def client_telegram_link():
+    from telegram_web_link import issue,confirm,unlink,active_digests
+    client_origin()
+    cid=client_id()
+    if not cid: abort(401)
+    body=request.get_json(silent=True)
+    if not isinstance(body,dict) or body.get("action") not in ("issue","confirm","unlink"): abort(400)
+    action=body["action"]
+    allowed=active_digests(KEY,os.environ.get("LERIKA_TG_CLIENT_PILOT",""),os.environ.get("LERIKA_TG_PILOT_CHAT_IDS",""))
+    if action!="unlink" and not allowed: abort(403)
+    reserve_limits([("lerika-web-link-"+cid,12,900)])
+    with db() as c:
+        lock(c,82003)
+        if not c.execute("SELECT id FROM clients WHERE id=?",(cid,)).fetchone(): abort(401)
+        if action=="unlink":
+            unlink(c,cid)
+            return jsonify(ok=True)
+        if action=="issue":
+            token=issue(c,cid,KEY,int(time.time()))
+            if token is None: return jsonify(ok=False,message="Аккаунт уже связан с Telegram.")
+            return jsonify(ok=True,code=token,expires_in=600)
+        proof=body.get("proof")
+        if not isinstance(proof,str) or not confirm(c,cid,KEY,proof.strip(),int(time.time()),allowed):
+            return jsonify(ok=False,message="Код недействителен или привязка недоступна.")
+        return jsonify(ok=True)
+
 @app.get("/api/client/session")
 def client_session():
     cid=client_id()
@@ -732,9 +769,18 @@ def client_session():
         row=c.execute("SELECT name,email FROM clients WHERE id=?",(cid,)).fetchone()
         if not row: abort(401)
         orders=[dict(x) for x in c.execute("SELECT p.id,p.title,p.stage,p.status,r.created,n.number FROM client_requests cr JOIN projects p ON p.id=cr.project JOIN design_requests r ON r.id=p.id LEFT JOIN request_numbers n ON n.request_id=r.id WHERE cr.client=? ORDER BY r.created DESC",(cid,))]
+        from telegram_web_link import active_digests
+        allowed=active_digests(KEY,os.environ.get("LERIKA_TG_CLIENT_PILOT",""),os.environ.get("LERIKA_TG_PILOT_CHAT_IDS",""))
+        link=c.execute("SELECT l.chat_key FROM telegram_web_links l JOIN telegram_pilot_clients t ON t.chat_key=l.chat_key WHERE l.client=?",(cid,)).fetchone()
+        linked=bool(link and link["chat_key"] in allowed)
+        if linked:
+            extra=[dict(x) for x in c.execute("SELECT p.id,p.title,p.stage,p.status,r.created,n.number FROM telegram_test_owners o JOIN projects p ON p.id=o.request_id JOIN design_requests r ON r.id=p.id JOIN request_numbers n ON n.request_id=r.id WHERE o.chat_key=? AND p.published=0 ORDER BY r.created DESC",(link["chat_key"],))]
+            known={x["id"] for x in orders}
+            orders.extend(x for x in extra if x["id"] not in known)
+            orders.sort(key=lambda x:x["created"],reverse=True)
     for order in orders:
         order["number"]=request_number(order["number"]) if order["number"] is not None else order["id"][:12]
-    return jsonify(name=row["name"],email=row["email"],orders=orders)
+    return jsonify(name=row["name"],email=row["email"],orders=orders,telegram_link_available=bool(allowed),telegram_linked=linked,telegram_link_exists=bool(link))
 
 @app.get("/api/clients")
 @admin
