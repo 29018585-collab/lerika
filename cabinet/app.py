@@ -130,6 +130,7 @@ if not SETUP_REQUIRED:
     CREATE TABLE IF NOT EXISTS design_briefs(project TEXT PRIMARY KEY REFERENCES projects(id), brief TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS clients(id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, password_hash TEXT NOT NULL, created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS client_requests(project TEXT PRIMARY KEY REFERENCES projects(id), client TEXT NOT NULL REFERENCES clients(id));
+    CREATE TABLE IF NOT EXISTS client_project_approvals(project TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, client TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE, revision INTEGER NOT NULL, manifest TEXT NOT NULL, note TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('pending','approved','changes','superseded')), created INTEGER NOT NULL, decided INTEGER, comment TEXT NOT NULL DEFAULT '', PRIMARY KEY(project,client,revision));
     CREATE TABLE IF NOT EXISTS client_order_messages(id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, client TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE, author TEXT NOT NULL CHECK(author IN ('client','designer')), body TEXT NOT NULL, created INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS client_order_messages_thread ON client_order_messages(project,client,created,id);
     CREATE TABLE IF NOT EXISTS client_file_shares(file TEXT PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE, client TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE);
@@ -779,7 +780,7 @@ def order_activity_event(c,project,owner,kind):
     from telegram_client_pilot import notification_chat
     number=existing_number(c,project)
     if not number: return None
-    if kind=="client-message":
+    if kind in ("client-message","approval-response"):
         chat=os.environ.get("LERIKA_TELEGRAM_ADMIN_CHAT_ID","").strip()
         if not re.fullmatch(r"-?[0-9]{1,20}",chat): return None
         return (chat,number,kind)
@@ -793,9 +794,9 @@ def deliver_order_activity(event):
     if not event: return False
     from telegram_core import bot_call
     chat,number,kind=event
-    labels={"client-message":"Новое сообщение от клиента","designer-message":"Новое сообщение от дизайнера","document":"Новый документ от дизайнера"}
+    labels={"client-message":"Новое сообщение от клиента","designer-message":"Новое сообщение от дизайнера","document":"Новый документ от дизайнера","approval-request":"Проект ожидает согласования","approval-response":"Клиент ответил на запрос согласования"}
     if kind not in labels: return False
-    path="/cabinet/" if kind=="client-message" else "/showroom/#client"
+    path="/cabinet/" if kind in ("client-message","approval-response") else "/showroom/#client"
     try:
         result=bot_call(os.environ.get("LERIKA_TELEGRAM_BOT_TOKEN","").strip(),"sendMessage",{"chat_id":int(chat),"text":"ЛериКа · Заявка "+number+"\n"+labels[kind]+"\nОткройте личный кабинет: "+PUBLIC_ORIGIN+path,"link_preview_options":{"is_disabled":True}})
         return isinstance(result,dict) and type(result.get("message_id")) is int
@@ -834,6 +835,61 @@ def client_order_messages(project):
 @admin
 def designer_order_messages(project):
     return order_thread(project,designer=True)
+
+def approval_manifest(c,project,owner):
+    return [dict(f) for f in c.execute("SELECT f.id,f.name FROM files f JOIN client_file_shares s ON s.file=f.id WHERE f.project=? AND s.client=? ORDER BY f.id",(project,owner))]
+
+def approval_rows(c,project,owner):
+    rows=[dict(x) for x in c.execute("SELECT revision,manifest,note,state,created,decided,comment FROM client_project_approvals WHERE project=? AND client=? ORDER BY revision DESC",(project,owner))]
+    current=approval_manifest(c,project,owner)
+    for row in rows:
+        row["files"]=json.loads(row.pop("manifest"))
+        row["current"]=row["files"]==current
+    return rows
+
+def project_approval(project,designer=False):
+    cid=None if designer else client_id()
+    if not designer and not cid: abort(401)
+    event=None
+    if request.method=="POST":
+        if not designer: client_origin()
+        d=request.get_json(silent=True)
+        if not isinstance(d,dict): abort(400)
+        note=d.get("note" if designer else "comment","")
+        if not isinstance(note,str) or len(note)>2000 or "\x00" in note: abort(400)
+        note=note.strip()
+        if not designer and (type(d.get("revision")) is not int or d.get("decision") not in ("approved","changes") or (d["decision"]=="changes" and not note)): abort(400)
+        reserve_limits([(limit_key("project-approval",cid or "designer"),30,3600)])
+    with db() as c:
+        if request.method=="POST": lock(c,82003)
+        owner=document_recipient(c,project)
+        if not owner or (not designer and owner!=cid): abort(404)
+        rows=approval_rows(c,project,owner)
+        if request.method=="POST":
+            if designer:
+                files=approval_manifest(c,project,owner)
+                if not files or d.get("file_ids")!=[f["id"] for f in files]: abort(409)
+                if len(rows)>=100: abort(413)
+                revision=rows[0]["revision"]+1 if rows else 1
+                c.execute("UPDATE client_project_approvals SET state='superseded' WHERE project=? AND client=? AND state='pending'",(project,owner))
+                c.execute("INSERT INTO client_project_approvals(project,client,revision,manifest,note,state,created) VALUES(?,?,?,?,?,'pending',?)",(project,owner,revision,json.dumps(files,ensure_ascii=False),note,int(time.time())))
+                event=order_activity_event(c,project,owner,"approval-request")
+            else:
+                if not rows or rows[0]["revision"]!=d["revision"] or rows[0]["state"]!="pending" or not rows[0]["current"]: abort(409)
+                c.execute("UPDATE client_project_approvals SET state=?,decided=?,comment=? WHERE project=? AND client=? AND revision=?",(d["decision"],int(time.time()),note,project,owner,d["revision"]))
+                event=order_activity_event(c,project,owner,"approval-response")
+            rows=approval_rows(c,project,owner)
+    if event and not deliver_order_activity(event): app.logger.warning("Order approval notification not delivered")
+    return jsonify(approvals=rows),201 if request.method=="POST" else 200
+
+@app.route("/api/client/orders/<project>/approval",methods=["GET","POST"])
+def client_project_approval(project):
+    return project_approval(project)
+
+@app.route("/api/projects/<project>/approval",methods=["GET","POST"])
+@admin
+def designer_project_approval(project):
+    return project_approval(project,designer=True)
 
 @app.get("/api/client/session")
 def client_session():

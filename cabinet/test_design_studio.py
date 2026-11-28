@@ -170,6 +170,56 @@ class StudioTests(unittest.TestCase):
             self.assertEqual(c.execute("SELECT COUNT(*) AS n FROM client_order_messages").fetchone()["n"],0)
         self.assertEqual(self.client.get(url,base_url=ORIGIN).status_code,404)
 
+    def test_v568_revision_bound_client_approval(self):
+        headers={"Origin":ORIGIN,"X-Lerika-Client":"1"}
+        owner={"name":"Approval QA","email":"approval@example.invalid","password":"long-test-password-123","consent":True}
+        self.assertEqual(self.client.post("/api/client/register",json=owner,headers=headers,base_url=ORIGIN).status_code,201)
+        rid=self.submit(self.data()).json["id"]
+        url="/api/client/orders/"+rid+"/approval"
+        admin_url="/api/projects/"+rid+"/approval"
+        admin=app.test_client()
+        h={"X-CSRF":admin.post("/login",json={"password":"local-test-password-only"},base_url=ORIGIN).json["csrf"]}
+        def issue(ids):
+            return admin.post(admin_url,json={"note":"Проверьте проект","file_ids":sorted(ids)},headers=h,base_url=ORIGIN)
+        def upload(name):
+            r=admin.post("/api/projects/"+rid+"/files",data={"stage":"3","file":(io.BytesIO(b"%PDF-1.4\nQA\n%%EOF"),name)},headers=h,base_url=ORIGIN,content_type="multipart/form-data")
+            self.assertEqual(r.status_code,201)
+            return r.json["id"]
+        def share(fid,yes=True):
+            self.assertEqual(admin.put("/api/files/"+fid+"/client-share",json={"shared":yes},headers=h,base_url=ORIGIN).status_code,200)
+        def decide(rev,decision,comment=""):
+            return self.client.post(url,json={"revision":rev,"decision":decision,"comment":comment},headers=headers,base_url=ORIGIN)
+        self.assertEqual(issue([]).status_code,409)
+        f1=upload("version1.pdf");share(f1)
+        self.assertEqual(issue([]).status_code,409)
+        r=issue([f1]);self.assertEqual(r.status_code,201)
+        self.assertEqual(r.json["approvals"][0]["revision"],1)
+        self.assertEqual(r.json["approvals"][0]["files"],[{"id":f1,"name":"version1.pdf"}])
+        other=app.test_client()
+        self.assertEqual(other.get(url,base_url=ORIGIN).status_code,401)
+        self.assertEqual(other.post("/api/client/register",json={**owner,"email":"other-approval@example.invalid"},headers=headers,base_url=ORIGIN).status_code,201)
+        self.assertEqual(other.get(url,base_url=ORIGIN).status_code,404)
+        self.assertEqual(other.post(url,json={"revision":1,"decision":"approved"},headers=headers,base_url=ORIGIN).status_code,404)
+        self.assertEqual(self.client.post(url,json={"revision":1,"decision":"approved"},base_url=ORIGIN).status_code,403)
+        self.assertEqual(decide(1,"changes").status_code,400)
+        self.assertEqual(decide(1,"changes","Изменить фасад").status_code,201)
+        self.assertEqual(decide(1,"approved").status_code,409)
+        f2=upload("version2.pdf");share(f1,False);share(f2)
+        self.assertEqual(issue([f2]).status_code,201)
+        f3=upload("extra.pdf");share(f3)
+        self.assertEqual(decide(2,"approved").status_code,409)
+        self.assertEqual(issue([f2,f3]).status_code,201)
+        self.assertEqual(decide(2,"approved").status_code,409)
+        self.assertEqual(decide(3,"approved").status_code,201)
+        rows=admin.get(admin_url,base_url=ORIGIN).json["approvals"]
+        self.assertEqual([r["state"] for r in rows],["approved","superseded","changes"])
+        self.assertEqual(rows[2]["comment"],"Изменить фасад")
+        self.assertIsNotNone(rows[0]["decided"])
+        self.assertEqual(self.client.get("/api/client/session",base_url=ORIGIN).json["orders"][0]["stage"],1)
+        self.assertEqual(admin.delete("/api/projects/"+rid,json={"confirm":True},headers=h,base_url=ORIGIN).status_code,200)
+        with db() as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) AS n FROM client_project_approvals").fetchone()["n"],0)
+
     def test_v564_client_document_explicit_share_and_revoke(self):
         headers={"Origin":ORIGIN,"X-Lerika-Client":"1"}
         owner={"name":"Client QA","email":"share@example.invalid","password":"long-test-password-123","consent":True}
